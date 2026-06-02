@@ -79,3 +79,13 @@ exports/tmp/
 # WordPress エクスポート（巨大XML）
 # ============================================
 firekidsmagazine.WordPress.*.xml
+
+# ============================================
+# Next.js
+# ============================================
+.next/
+node_modules/
+.env.local
+.env.production.local
+.env.development.local
+out/

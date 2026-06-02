@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --fk-dark: #1a1a1a;
+  --fk-brown: #5a5248;
+  --fk-warm: #8b6f47;
+  --fk-accent: #e67e22;
+  --fk-bg: #faf6ee;
+  --fk-border: #e8e4de;
+}
+
+body {
+  background-color: var(--fk-bg);
+  color: var(--fk-dark);
+}
