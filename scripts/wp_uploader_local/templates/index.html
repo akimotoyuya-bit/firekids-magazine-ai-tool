@@ -184,7 +184,7 @@ let parsedFiles = [];
 async function checkHealth() {
   const div = document.getElementById('health');
   try {
-    const res = await fetch('/health');
+    const res = await fetch('health');
     const data = await res.json();
     if (data.ok) {
       div.className = 'health ok';
@@ -218,7 +218,7 @@ async function parseHtml() {
     formData.append('html_files', f);
   }
 
-  const res = await fetch('/parse', { method: 'POST', body: formData });
+  const res = await fetch('parse', { method: 'POST', body: formData });
   const data = await res.json();
   if (data.error) {
     alert(data.error);
@@ -286,7 +286,7 @@ async function parsePastedText() {
     return;
   }
 
-  const res = await fetch('/parse-text', {
+  const res = await fetch('parse-text', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ htmls }),
@@ -368,7 +368,7 @@ async function publish() {
   });
 
   try {
-    const res = await fetch('/publish', {
+    const res = await fetch('publish', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ posts }),

@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>FIRE KIDS 記事生成ツール（AWS Bedrock）</title>
+<style>
+:root {
+  --bg: #fafafa; --card: #fff; --accent: #1a1a1a; --accent2: #5a5248;
+  --line: #e8e4de; --line2: #c8c0b4; --text: #1a1a1a; --sub: #3a3a3a;
+  --soft: #f7f5f2; --good: #2d7a3e; --bad: #b34040; --warn: #b07800;
+}
+* { box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+  background: var(--bg); color: var(--text); max-width: 1000px; margin: 0 auto; padding: 32px 20px; line-height: 1.7; }
+h1 { font-size: 22px; border-left: 4px solid var(--accent); padding-left: 14px; margin: 0 0 8px; }
+h2 { font-size: 16px; color: var(--accent); margin: 0 0 14px; }
+.sub { font-size: 12px; color: var(--sub); margin: 0 0 24px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 24px; margin-bottom: 20px; }
+label { display: block; font-weight: 600; margin: 12px 0 5px; font-size: 13px; color: var(--accent2); }
+input[type="text"], select, textarea {
+  width: 100%; padding: 9px 11px; border: 1px solid var(--line2);
+  border-radius: 3px; font-size: 13.5px; background: #fff; font-family: inherit; }
+textarea { resize: vertical; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+button.primary {
+  background: var(--accent); color: #fff; padding: 12px 28px;
+  border: 0; border-radius: 3px; cursor: pointer; font-weight: 700;
+  font-size: 14px; letter-spacing: 0.04em; margin-top: 16px; }
+button.primary:hover { background: var(--accent2); }
+button.primary:disabled { background: #aaa; cursor: not-allowed; }
+button.secondary {
+  background: #fff; color: var(--accent); padding: 10px 22px;
+  border: 1px solid var(--line2); border-radius: 3px; cursor: pointer;
+  font-weight: 600; font-size: 13px; margin-top: 8px; }
+button.secondary:hover { background: var(--soft); }
+.status { font-size: 12px; padding: 8px 12px; border-radius: 3px; margin-bottom: 16px; border: 1px solid var(--line); }
+.status.ok  { color: var(--good); border-color: var(--good); background: #eaf5ec; }
+.status.ng  { color: var(--bad);  border-color: var(--bad);  background: #f8eaea; }
+.status.warn{ color: var(--warn); border-color: #e6b800; background: #fffbea; }
+.hidden { display: none; }
+#spinner { display: none; font-size: 13px; color: var(--sub); margin-top: 12px; }
+#spinner.active { display: block; }
+.progress-bar { width: 100%; height: 4px; background: var(--line); border-radius: 2px; margin-top: 8px; overflow: hidden; }
+.progress-fill { height: 100%; background: var(--accent); width: 0%; transition: width 0.3s; border-radius: 2px; }
+#article-out { min-height: 400px; font-family: ui-monospace, "SF Mono", monospace; font-size: 12.5px; line-height: 1.8; }
+.badge { display: inline-block; background: var(--accent); color: #fff; font-size: 11px; font-weight: 600; padding: 2px 10px; border-radius: 2px; letter-spacing: 0.04em; }
+.muted { color: var(--sub); font-size: 12px; }
+.save-result { margin-top: 8px; font-size: 13px; padding: 8px 12px; border-radius: 3px; }
+.save-result.ok { background: #eaf5ec; color: var(--good); }
+.save-result.ng { background: #f8eaea; color: var(--bad); }
+</style>
+</head>
+<body>
+
+<h1>FIRE KIDS 記事生成ツール</h1>
+<p class="sub">AWS Bedrock（Claude）で記事を生成し、TXTとして保存します。</p>
+
+<div id="aws-status" class="status">AWS接続確認中…</div>
+
+<!-- Step 1: 記事情報入力 -->
+<div class="card">
+  <h2>1. 記事情報を入力</h2>
+
+  <div class="grid2">
+    <div>
+      <label>ブランド</label>
+      <select id="brand">
+        {% for key, val in brands.items() %}
+        <option value="{{ key }}">{{ val.jp }}（{{ key }}）</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label>トーン・記事タイプ</label>
+      <select id="tone">
+        <option value="guide">ガイド系（○○とは・解説）</option>
+        <option value="verify">検証系（本当に○○？・やめとけ）</option>
+        <option value="comparison">比較系（AとBの違い）</option>
+        <option value="ranking">ランキング系（TOP10・10選）</option>
+      </select>
+    </div>
+  </div>
+
+  <label>記事タイトル <span class="muted">（「｜FIRE KIDS Magazine」は自動付与）</span></label>
+  <input type="text" id="title" placeholder="例: IWC ポルトフィーノ ヴィンテージ｜1960〜70年代モデル解説">
+
+  <label>テーマ・内容の詳細 <span class="muted">（どんな内容を書くか具体的に）</span></label>
+  <textarea id="theme" rows="3" placeholder="例: 1960〜70年代のIWC ポルトフィーノ（ラウンドケース・ドレスウォッチ）について、搭載キャリバー（Cal.89・Cal.8541系）の違い、素材バリエーション（SS・18KYG）、選び方のポイントを解説する記事"></textarea>
+
+  <label>メインキーワード <span class="muted">（カンマ区切り）</span></label>
+  <input type="text" id="keywords" placeholder="例: IWC ポルトフィーノ, ヴィンテージ IWC, オールドインター">
+
+  <label>追加指示・特記事項 <span class="muted">（省略可）</span></label>
+  <textarea id="notes" rows="2" placeholder="例: Cal.8541BとCal.89の比較表を必ず入れる。お魚リューズについて詳しく書く。"></textarea>
+
+  <button class="primary" onclick="generate()" id="gen-btn">生成する（AWS Bedrock）</button>
+
+  <div id="spinner">
+    <p>⏳ Claudeが記事を生成中です… 通常30〜60秒かかります</p>
+    <div class="progress-bar"><div class="progress-fill" id="progress"></div></div>
+  </div>
+</div>
+
+<!-- Step 2: 生成結果 -->
+<div class="card hidden" id="result-card">
+  <h2>2. 生成された記事（編集可能）</h2>
+  <div style="display:flex; gap:12px; margin-bottom:8px; align-items:center; flex-wrap:wrap;">
+    <span class="badge" id="result-brand">BRAND</span>
+    <span class="muted" id="result-chars"></span>
+  </div>
+  <div style="background:var(--soft); border:1px solid var(--line); border-radius:3px; padding:9px 14px; margin-bottom:12px; font-size:12.5px; color:var(--sub);">
+    保存ファイル名（自動）: <strong id="result-filename" style="color:var(--accent); font-family:monospace;"></strong>
+  </div>
+  <textarea id="article-out" rows="30"></textarea>
+
+  <div style="margin-top:16px; display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
+    <button class="primary" onclick="saveArticle()">TXTとして保存（articles/BRAND/）</button>
+    <button class="secondary" onclick="copyArticle()">クリップボードにコピー</button>
+    <button class="secondary" onclick="resetForm()">最初からやり直す</button>
+  </div>
+  <div id="save-result"></div>
+</div>
+
+<!-- 注意書き -->
+<div class="card" style="background:var(--soft); border-color: var(--line2);">
+  <h2>⚠️ 使用上の注意</h2>
+  <ul style="margin:0; padding-left:20px; font-size:13px; color:var(--sub); line-height:2;">
+    <li>生成された記事は<strong>必ず人間が確認</strong>してから保存・投稿してください</li>
+    <li>Cal.番号・Ref.番号・振動数などの仕様は<strong>caliber_db.json / correction_log.json</strong>と照合してください</li>
+    <li>AIが一般知識で補完した可能性のある箇所は削除・修正してください</li>
+    <li>TXT保存後、HTML化はWP投稿アップローダー（localhost:8000）で行います</li>
+  </ul>
+</div>
+
+<script>
+async function checkAws() {
+  const el = document.getElementById('aws-status');
+  try {
+    const r = await fetch('ping');
+    const d = await r.json();
+    if (d.aws_key_set) {
+      el.className = 'status ok';
+      el.textContent = `✓ AWS接続設定済み（キー: ${d.aws_key_prefix} / モデル: ${d.bedrock_model} / リージョン: ${d.region}）`;
+    } else {
+      el.className = 'status warn';
+      el.textContent = '⚠ AWS認証キーが未設定です。scripts/article_generator/.env に AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION を設定してください。';
+    }
+  } catch(e) {
+    el.className = 'status ng';
+    el.textContent = `✗ サーバーエラー: ${e.message}`;
+  }
+}
+
+let progressTimer = null;
+
+function startProgress() {
+  const bar = document.getElementById('progress');
+  let pct = 0;
+  bar.style.width = '0%';
+  progressTimer = setInterval(() => {
+    pct = Math.min(pct + (100 - pct) * 0.04, 90);
+    bar.style.width = pct + '%';
+  }, 500);
+}
+
+function stopProgress() {
+  clearInterval(progressTimer);
+  document.getElementById('progress').style.width = '100%';
+  setTimeout(() => { document.getElementById('progress').style.width = '0%'; }, 800);
+}
+
+let currentSlug = '';
+
+async function generate() {
+  const btn = document.getElementById('gen-btn');
+  const spinner = document.getElementById('spinner');
+
+  const brand    = document.getElementById('brand').value;
+  const title    = document.getElementById('title').value.trim();
+  const theme    = document.getElementById('theme').value.trim();
+  const tone     = document.getElementById('tone').value;
+  const keywords = document.getElementById('keywords').value.trim();
+  const notes    = document.getElementById('notes').value.trim();
+
+  if (!title || !theme) {
+    alert('タイトルとテーマは必須です');
+    return;
+  }
+
+  btn.disabled = true;
+  spinner.className = 'active';
+  startProgress();
+
+  try {
+    const res = await fetch('generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ brand, title, theme, tone, keywords, notes }),
+    });
+    const data = await res.json();
+    stopProgress();
+
+    if (data.ok) {
+      currentSlug = data.slug;
+      const today = new Date().toISOString().slice(0, 10);
+      const filename = `${today}_${data.slug}.txt`;
+
+      document.getElementById('article-out').value = data.article;
+      document.getElementById('result-brand').textContent = brand;
+      document.getElementById('result-chars').textContent = `${data.article.length.toLocaleString()}字`;
+      document.getElementById('result-filename').textContent = `articles/${brand}/${filename}`;
+      document.getElementById('result-card').classList.remove('hidden');
+      document.getElementById('result-card').scrollIntoView({ behavior: 'smooth' });
+    } else {
+      alert('生成失敗: ' + data.error);
+    }
+  } catch(e) {
+    stopProgress();
+    alert('エラー: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    spinner.className = '';
+  }
+}
+
+async function saveArticle() {
+  const brand   = document.getElementById('brand').value;
+  const content = document.getElementById('article-out').value;
+
+  const res = await fetch('save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ brand, slug: currentSlug, content }),
+  });
+  const data = await res.json();
+  const el = document.getElementById('save-result');
+  if (data.ok) {
+    el.className = 'save-result ok';
+    el.textContent = `✓ 保存完了: ${data.saved_path}`;
+  } else {
+    el.className = 'save-result ng';
+    el.textContent = `✗ 保存失敗: ${data.error}`;
+  }
+}
+
+function copyArticle() {
+  const txt = document.getElementById('article-out').value;
+  navigator.clipboard.writeText(txt).then(() => alert('コピーしました'));
+}
+
+function resetForm() {
+  document.getElementById('result-card').classList.add('hidden');
+  document.getElementById('article-out').value = '';
+  document.getElementById('save-result').textContent = '';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+checkAws();
+</script>
+</body>
+</html>

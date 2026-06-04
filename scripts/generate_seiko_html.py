@@ -8,9 +8,11 @@ import os
 import re
 import json
 import html
+from pathlib import Path
 
-BASE = "/Users/sasakitasuku/Library/CloudStorage/GoogleDrive-sasaki_tasuku@cellmuller.com/マイドライブ/MAGAZINE"
-SEIKO_DIR = os.path.join(BASE, "articles/SEIKO")
+# プロジェクトルートを自動判定（scripts/ の親ディレクトリ）
+BASE = str(Path(__file__).resolve().parent.parent)
+SEIKO_DIR = os.path.join(BASE, "articles", "SEIKO")
 CTA_URL = "https://firekids.jp/products/list?category_id=10&utm_source=firekids_magazine&utm_medium=seo&utm_campaign=organic"
 DATE_PUBLISHED = "2026-03-19"
 

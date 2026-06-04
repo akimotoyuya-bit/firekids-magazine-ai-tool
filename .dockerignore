@@ -1,0 +1,16 @@
+.git
+.gitignore
+.claude
+**/.env
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+terminals
+docs
+factcheck_logs
+review_docs
+x_posts
+*.md
+!CLAUDE.md
+scripts/wp_uploader_local/.env
+scripts/article_generator/.env

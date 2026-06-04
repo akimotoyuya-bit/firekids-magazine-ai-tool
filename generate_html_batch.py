@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Generate WordPress Gutenberg HTML from TXT articles for FIRE KIDS Magazine."""
 import re, os
+from pathlib import Path
 
-BASE = "/Users/sasakitasuku/Library/CloudStorage/GoogleDrive-sasaki_tasuku@cellmuller.com/\u30de\u30a4\u30c9\u30e9\u30a4\u30d6/MAGAZINE"
+# プロジェクトルート（このスクリプトの親ディレクトリ）を自動判定
+# 旧Mac環境: /Users/sasakitasuku/.../MAGAZINE
+# 新Windows環境: スクリプトと同じ場所（FirekidsMagazine-main/）
+BASE = str(Path(__file__).resolve().parent)
 
 BRAND_IMAGES = {
     "IWC": [

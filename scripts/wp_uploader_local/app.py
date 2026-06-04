@@ -23,7 +23,7 @@ from flask import Flask, render_template, request, jsonify
 import requests
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 80 * 1024 * 1024  # 80MB
@@ -77,7 +77,9 @@ BRAND_KEYWORDS = [
 
 
 def get_auth():
-    return (WP_USER, WP_APP_PASSWORD)
+    # Application Password のスペースを除去（requests の latin-1 制限を回避）
+    password = WP_APP_PASSWORD.replace(' ', '')
+    return (WP_USER, password)
 
 
 def clean_title(title):
@@ -382,23 +384,36 @@ def publish():
     })
 
 
+@app.route('/ping')
+def ping():
+    return jsonify({'pong': True, 'user': os.getenv('WP_USER', ''), 'pw_len': len(os.getenv('WP_APP_PASSWORD', '').replace(' ', ''))})
+
+
 @app.route('/health')
 def health():
-    if not WP_USER or not WP_APP_PASSWORD:
-        return jsonify({'ok': False, 'error': '.envにWP_USER/WP_APP_PASSWORDを設定してください'}), 500
-    r = requests.get(f'{WP_BASE_URL}/wp-json/wp/v2/users/me', auth=get_auth(), timeout=15)
-    if r.ok:
-        u = r.json()
-        # ライターユーザー（編集部）の存在チェックも実施
-        writer_id = get_writer_user_id()
-        return jsonify({
-            'ok': True,
-            'user': u.get('name'),
-            'id': u.get('id'),
-            'writer_user_id': writer_id,
-            'writer_user_found': writer_id is not None,
-        })
-    return jsonify({'ok': False, 'status': r.status_code, 'error': r.text}), r.status_code
+    user = os.getenv('WP_USER', '')
+    pw = os.getenv('WP_APP_PASSWORD', '').replace(' ', '')
+    base = os.getenv('WP_BASE_URL', 'https://m.firekids.jp').rstrip('/')
+    if not user or not pw:
+        return jsonify({'ok': False, 'error': '.envにWP_USER/WP_APP_PASSWORDを設定してください'})
+    try:
+        r = requests.get(f'{base}/wp-json/wp/v2/users/me', auth=(user, pw), timeout=15)
+        if r.ok:
+            u = r.json()
+            try:
+                writer_id = get_writer_user_id()
+            except Exception:
+                writer_id = None
+            return jsonify({
+                'ok': True,
+                'user': u.get('name'),
+                'id': u.get('id'),
+                'writer_user_id': writer_id,
+                'writer_user_found': writer_id is not None,
+            })
+        return jsonify({'ok': False, 'status': r.status_code, 'error': r.text[:200]})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)})
 
 
 if __name__ == '__main__':

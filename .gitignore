@@ -15,6 +15,7 @@
 # WordPressアプリケーションパスワードを含む可能性
 scripts/wp_uploader_local/.env
 scripts/wp_unpublisher_local/.env
+deploy/env.production
 
 # ============================================
 # Python
