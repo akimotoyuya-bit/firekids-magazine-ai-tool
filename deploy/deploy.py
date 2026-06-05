@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Deploy FIRE KIDS Magazine Tool to AWS App Runner."""
 import json
+import os
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -37,6 +39,28 @@ def load_env_files() -> dict:
 
 def file_uri(p: Path) -> str:
     return "file://" + str(p.resolve()).replace("\\", "/")
+
+
+# 実シークレット（RuntimeEnvironmentVariables 等）を含む設定 JSON は
+# リポジトリ直下に残さない。システムの一時ディレクトリに書き、実行後に削除する。
+_TEMP_FILES: list[Path] = []
+
+
+def write_temp_json(data: dict, label: str) -> Path:
+    fd, name = tempfile.mkstemp(prefix=f"fk-{label}-", suffix=".json")
+    path = Path(name)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    _TEMP_FILES.append(path)
+    return path
+
+
+def cleanup_temp_files() -> None:
+    for p in _TEMP_FILES:
+        try:
+            p.unlink()
+        except OSError:
+            pass
 
 
 def run(cmd: list[str], check=True) -> subprocess.CompletedProcess:
@@ -88,8 +112,7 @@ def main():
                 "Action": "sts:AssumeRole",
             }],
         }
-        trust_file = ROOT / "deploy" / "_trust-policy.json"
-        trust_file.write_text(json.dumps(trust), encoding="utf-8")
+        trust_file = write_temp_json(trust, "trust-policy")
         run(["aws", "iam", "create-role", "--role-name", ROLE_NAME,
              "--assume-role-policy-document", file_uri(trust_file)])
         run(["aws", "iam", "attach-role-policy", "--role-name", ROLE_NAME,
@@ -120,8 +143,7 @@ def main():
     if existing:
         print(f"Updating App Runner service: {SERVICE_NAME}")
         svc_arn = existing["ServiceArn"]
-        cfg_file = ROOT / "deploy" / "_source-config.json"
-        cfg_file.write_text(json.dumps(source_config), encoding="utf-8")
+        cfg_file = write_temp_json(source_config, "source-config")
         # ImageIdentifier に毎回ユニークなタグを指定するため
         # update-service だけで確実に新しいイメージのデプロイが走る
         run(["aws", "apprunner", "update-service", "--region", REGION,
@@ -134,8 +156,7 @@ def main():
             "SourceConfiguration": source_config,
             "InstanceConfiguration": {"Cpu": "1 vCPU", "Memory": "2 GB"},
         }
-        cfg_file = ROOT / "deploy" / "_create-service.json"
-        cfg_file.write_text(json.dumps(create_input), encoding="utf-8")
+        cfg_file = write_temp_json(create_input, "create-service")
         r = run(["aws", "apprunner", "create-service", "--region", REGION,
                  "--cli-input-json", file_uri(cfg_file), "--output", "json"])
         svc_arn = json.loads(r.stdout)["Service"]["ServiceArn"]
@@ -170,4 +191,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        cleanup_temp_files()

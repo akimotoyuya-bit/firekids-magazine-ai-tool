@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AI推敲 - FIRE KIDS Magazine</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Cormorant+Garamond:wght@600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -12,8 +15,8 @@
   --fk-dark:   #1a1a1a;
   --fk-brown:  #5a5248;
   --fk-warm:   #8b6f47;
-  --fk-accent: #e67e22;
-  --fk-accent-d: #c4621a;
+  --fk-accent: #c0282d;
+  --fk-accent-d: #9a1f23;
   --fk-border: #e8e4de;
   --text:      #1a1a1a;
   --sub:       #5a5248;
@@ -27,7 +30,7 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
   color: var(--text);
   background:
-    radial-gradient(1100px 560px at 8% -12%, rgba(230,126,34,0.10), transparent 60%),
+    radial-gradient(1100px 560px at 8% -12%, rgba(192,40,45,0.09), transparent 60%),
     radial-gradient(960px 520px at 96% -4%, rgba(139,111,71,0.13), transparent 55%),
     linear-gradient(180deg, #fdfbf6 0%, #f6f0e5 55%, #f1e9da 100%);
   background-attachment: fixed;
@@ -51,8 +54,8 @@ body {
 .top-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 .meta-chip {
   font-size: 11px; font-weight: 600;
-  background: rgba(230,126,34,0.18); color: #f0a85a;
-  border: 1px solid rgba(230,126,34,0.4);
+  background: rgba(192,40,45,0.16); color: #e8888c;
+  border: 1px solid rgba(192,40,45,0.4);
   border-radius: 999px; padding: 4px 12px;
 }
 .char-info { font-size: 11px; color: #9ca3af; }
@@ -74,9 +77,9 @@ body {
   text-decoration: none; border-left: 3px solid transparent;
   transition: background 0.15s, color 0.15s;
 }
-.sidebar-item:hover  { background: rgba(230,126,34,0.06); color: var(--text); }
+.sidebar-item:hover  { background: rgba(192,40,45,0.06); color: var(--text); }
 .sidebar-item.active {
-  background: rgba(230,126,34,0.1); color: var(--fk-accent-d);
+  background: rgba(192,40,45,0.1); color: var(--fk-accent-d);
   font-weight: 700; border-left-color: var(--fk-accent);
 }
 .sidebar-icon { width: 16px; text-align: center; font-size: 14px; flex-shrink: 0; }
@@ -110,7 +113,7 @@ body {
   color: var(--muted); font-size: 14px; padding: 2px 6px;
   border-radius: 4px; transition: color 0.15s, background 0.15s;
 }
-.icon-btn:hover { color: var(--fk-accent-d); background: rgba(230,126,34,0.08); }
+.icon-btn:hover { color: var(--fk-accent-d); background: rgba(192,40,45,0.08); }
 
 #editor {
   flex: 1; padding: 18px; background: transparent; border: none; outline: none;
@@ -118,24 +121,57 @@ body {
   font-size: 13px; line-height: 1.8; resize: none; overflow-y: auto;
 }
 
-#preview { flex: 1; padding: 22px 26px; overflow-y: auto; font-size: 14px; line-height: 1.85; color: var(--text); }
-#preview h1  { font-size: 19px; font-weight: 800; margin: 0 0 14px;
-  background: linear-gradient(100deg,#1a1a1a,#8b6f47,#e67e22);
-  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
-#preview h2  { font-size: 15px; font-weight: 700; color: var(--fk-accent-d); margin: 24px 0 8px; border-left: 3px solid var(--fk-accent); padding-left: 10px; }
-#preview h3  { font-size: 13.5px; font-weight: 600; color: var(--fk-warm); margin: 18px 0 6px; }
-#preview p   { margin: 0 0 12px; }
-#preview strong { color: var(--fk-accent-d); }
-#preview table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13px; }
-#preview th { background: linear-gradient(100deg,#1a1a1a,#2c2620,#3a3128); color: #fff; padding: 8px 12px; text-align: left; border: 1px solid #2c2620; font-size: 11px; }
-#preview td { padding: 8px 12px; border: 1px solid var(--fk-border); }
-#preview tr:nth-child(even) td { background: rgba(255,255,255,0.5); }
-#preview blockquote { border-left: 3px solid var(--fk-accent); margin: 14px 0; padding: 8px 14px; background: rgba(253,244,230,0.7); border-radius: 0 8px 8px 0; color: #8a5a13; }
-#preview ul, #preview ol { padding-left: 20px; margin: 0 0 12px; }
-#preview li { margin-bottom: 5px; }
-#preview hr { border: none; border-top: 1px solid var(--fk-border); margin: 20px 0; }
-#preview code { background: #f3ece0; padding: 1px 5px; border-radius: 4px; font-family: monospace; font-size: 12px; color: var(--fk-accent-d); }
-#preview a { color: var(--fk-accent-d); }
+/* ── プレビュー（WordPress記事ページ風）─────────────── */
+#preview { flex: 1; overflow-y: auto; background: #fff; }
+.wp-topbar {
+  background: #1a1a1a; color: #fff; text-align: center;
+  font-family: "Noto Sans JP", sans-serif; font-weight: 700;
+  font-size: 12.5px; padding: 9px; letter-spacing: 0.03em;
+}
+.wp-header {
+  background: #8e1728; padding: 14px 20px;
+  display: flex; align-items: center; justify-content: center;
+}
+.wp-logo { color: #fff; font-family: "Cormorant Garamond", serif; font-size: 24px; font-weight: 600; letter-spacing: 0.05em; }
+.wp-logo em { font-style: italic; opacity: 0.92; }
+.wp-art { font-family: "Zen Kaku Gothic New","Noto Sans JP",sans-serif; color: #1a1a1a; padding: 22px 26px 50px; }
+.wp-crumbs { font-size: 11px; color: #777; margin-bottom: 16px; }
+.wp-crumbs .sep { margin: 0 6px; color: #bbb; }
+.wp-crumbs .cur { color: #8e1728; }
+.wp-art-title { font-size: 20px; font-weight: 700; line-height: 1.5; margin-bottom: 12px; }
+.wp-art-meta { display: flex; flex-wrap: wrap; gap: 14px; font-size: 11.5px; color: #999; margin-bottom: 20px; }
+.wp-art-meta .cat { color: #8e1728; }
+.wp-art-hero {
+  position: relative; width: 100%; padding-top: 55.8%;
+  background: linear-gradient(135deg,#2a2a2a,#4a3f38);
+  border-radius: 4px; margin-bottom: 26px; overflow: hidden;
+}
+.wp-art-hero::after {
+  content: "FIRE KIDS"; position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: rgba(255,255,255,0.3); font-family: "Cormorant Garamond", serif;
+  font-size: 22px; letter-spacing: 0.1em;
+}
+.rte { font-size: 15px; line-height: 2.0; color: #2a2a2a; }
+.rte h1 { display: none; }
+.rte h2 { font-size: 19px; font-weight: 700; color: #1a1a1a; margin: 36px 0 16px; padding-bottom: 11px; border-bottom: 2px solid #8e1728; }
+.rte h3 { font-size: 16px; font-weight: 700; color: #1a1a1a; margin: 26px 0 11px; padding-left: 11px; border-left: 4px solid #8e1728; }
+.rte p { margin: 0 0 16px; }
+.rte strong { font-weight: 700; color: #1a1a1a; }
+.rte ul, .rte ol { padding-left: 22px; margin: 0 0 16px; }
+.rte li { margin-bottom: 7px; }
+.rte hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+.rte a {
+  display: inline-block; background: #8e1728; color: #fff !important;
+  text-decoration: none; font-weight: 700; font-size: 13.5px;
+  padding: 12px 28px; border-radius: 9999px; margin: 6px 0;
+}
+.rte table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 13.5px; }
+.rte th, .rte td { border: 1px solid #ddd; padding: 10px 13px; text-align: left; }
+.rte thead th, .rte tr:first-child td { background: #f3f4f5; font-weight: 700; }
+.rte img { max-width: 100%; height: auto; border-radius: 4px; margin: 8px 0; }
+.rte blockquote { border-left: 4px solid #8e1728; margin: 16px 0; padding: 8px 16px; background: #faf3f4; color: #6a2a32; }
+.rte code { background: #f3f4f5; padding: 1px 5px; border-radius: 4px; font-family: monospace; font-size: 13px; }
 
 /* ── Stepper ────────────────────────────────────── */
 .stepper-col { width: 150px; flex-shrink: 0; }
@@ -169,10 +205,10 @@ body {
 .action-row { margin-top: 10px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .btn-primary {
   padding: 10px 22px;
-  background: linear-gradient(120deg,#e67e22,#c4621a);
+  background: linear-gradient(120deg,#c0282d,#9a1f23);
   border: none; border-radius: 10px;
   color: #fff; font-size: 13px; font-weight: 700; cursor: pointer;
-  box-shadow: 0 4px 14px rgba(230,126,34,0.32);
+  box-shadow: 0 4px 14px rgba(192,40,45,0.32);
   transition: opacity 0.15s;
 }
 .btn-primary:hover    { opacity: 0.92; }
@@ -275,7 +311,39 @@ const editor   = document.getElementById('editor');
 const preview  = document.getElementById('preview');
 
 marked.setOptions({ breaks: true, gfm: true });
-function refreshPreview() { preview.innerHTML = marked.parse(editor.value || ''); }
+
+// 記事Markdownを「タイトル」と「本文」に分離（先頭H1とフロントマター --- ... --- を除去）
+function splitArticle(md) {
+  let title = '';
+  const m = md.match(/^\s*#\s+(.+?)\s*$/m);
+  if (m) title = m[1].trim();
+  let body = md.replace(/^\s*#\s+.+?\s*$\n?/m, '');
+  body = body.replace(/^\s*-{3,}[\s\S]*?-{3,}\s*/, '');
+  return { title, body };
+}
+
+function escHtml(s) {
+  return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function refreshPreview() {
+  const { title, body } = splitArticle(editor.value || '');
+  const d = new Date();
+  const dateStr = d.getFullYear() + '.' + String(d.getMonth()+1).padStart(2,'0') + '.' + String(d.getDate()).padStart(2,'0');
+  const t = title || (brand ? brand + ' 記事' : '記事タイトル');
+  preview.innerHTML =
+    '<div class="wp-topbar">ヴィンテージ時計の魅力を伝える専門メディア</div>' +
+    '<div class="wp-header"><span class="wp-logo">FIRE KIDS <em>MAGAZINE</em></span></div>' +
+    '<div class="wp-art">' +
+      '<div class="wp-crumbs"><span>トップ</span><span class="sep">›</span>' +
+      '<span>すべての記事</span><span class="sep">›</span><span class="cur">' + escHtml(t) + '</span></div>' +
+      '<h1 class="wp-art-title">' + escHtml(t) + '</h1>' +
+      '<div class="wp-art-meta"><span>' + dateStr + '</span>' +
+      '<span class="cat">時計の基礎知識</span><span>Written by 秋吉 健太</span></div>' +
+      '<div class="wp-art-hero"></div>' +
+      '<div class="rte">' + marked.parse(body || '') + '</div>' +
+    '</div>';
+}
 
 let timer = null;
 editor.addEventListener('input', () => {

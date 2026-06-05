@@ -33,6 +33,7 @@ FIRE KIDS Magazine 記事生成アプリ（AWS Bedrock + Claude版）
 """
 import datetime
 import json
+import logging
 import math
 import os
 import re
@@ -58,6 +59,7 @@ from vector_store import ArticleVectorStore, get_store
 from inventory import (
     find_by_fk, format_for_prompt, get_in_stock,
     inventory_summary, reload_from_bytes,
+    select_feature_item, summarize_item,
 )
 
 # ─── 初期化 ──────────────────────────────────────────────────────────────────
@@ -68,6 +70,15 @@ load_dotenv(ROOT / "scripts" / "article_generator" / ".env", override=True)
 
 app = Flask(__name__)
 app.secret_key = os.getenv("APP_SECRET_KEY", "firekids-default-secret-change-me")
+
+# ─── ロギング ──────────────────────────────────────────────────────────────────
+# ジョブの進行を追跡するための構造化ログ。秘密情報（キー・パスワード等）は
+# 絶対に出力しない。job_id / brand / stage など非機密の運用情報のみを記録する。
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+log = logging.getLogger("fk_generator")
 
 # ─── 非同期ジョブストア ────────────────────────────────────────────────────────
 # App Runner のロードバランサーは ~120 秒でタイムアウトするため、
@@ -88,10 +99,56 @@ def _cleanup_jobs() -> None:
         for jid in expired:
             JOBS.pop(jid, None)
 
+
+class InventoryMissingError(Exception):
+    """ブランド指定生成で在庫が 1 件も見つからず、かつ一般記事継続も許可されていない。"""
+
+
+# ─── スキャン状態（多重起動防止 + 進行ステータス）─────────────────────────────
+# 初回キャッシュ無しの状態で生成を連打すると、WordPress 全件スキャンが
+# 何本も並行起動してしまう。_SCAN_STATE でロックを取り、1 本だけ走らせる。
+_SCAN_LOCK: threading.Lock = threading.Lock()
+_SCAN_STATE: dict = {
+    "running":          False,
+    "last_started_at":  "",
+    "last_finished_at": "",
+    "last_error":       "",
+    "degraded_modes":   [],
+}
+
+
+def _run_scan_locked(incremental: bool) -> bool:
+    """スキャンをロック付きで実行する。既に実行中なら False を返して何もしない。
+
+    呼び出し側がスレッドを起こすかどうかは任意。この関数自体は同期実行。
+    """
+    with _SCAN_LOCK:
+        if _SCAN_STATE["running"]:
+            return False
+        _SCAN_STATE["running"]         = True
+        _SCAN_STATE["last_started_at"] = datetime.datetime.now().isoformat()
+        _SCAN_STATE["last_error"]      = ""
+        _SCAN_STATE["degraded_modes"]  = []
+    reset_embed_state()
+    log.info("scan_started incremental=%s", incremental)
+    try:
+        scan_wordpress_posts(incremental=incremental)
+    except Exception as e:
+        _SCAN_STATE["last_error"] = str(e)
+        log.warning("scan_error incremental=%s err=%s", incremental, e)
+    finally:
+        if embedding_degraded():
+            _SCAN_STATE["degraded_modes"] = ["embedding_unavailable"]
+        _SCAN_STATE["running"]          = False
+        _SCAN_STATE["last_finished_at"] = datetime.datetime.now().isoformat()
+        log.info("scan_finished degraded=%s", _SCAN_STATE["degraded_modes"])
+    return True
+
 # ─── 定数 ────────────────────────────────────────────────────────────────────
 
 EMBED_MODEL_ID        = os.getenv("EMBED_MODEL_ID",        "amazon.titan-embed-text-v2:0")
 CACHE_REFRESH_HOURS   = int(os.getenv("CACHE_REFRESH_HOURS",   "12"))
+LOOKBACK_DAYS         = int(os.getenv("LOOKBACK_DAYS",          "60"))
 ARTICLE_SIM_THRESHOLD = float(os.getenv("ARTICLE_SIM_THRESHOLD", "0.88"))
 HEADING_SIM_THRESHOLD = float(os.getenv("HEADING_SIM_THRESHOLD", "0.86"))
 HEADING_HIT_MIN       = int(os.getenv("HEADING_HIT_MIN",        "3"))
@@ -134,6 +191,45 @@ TONE_CHARS = {
 }
 
 
+def _parse_modified(value: str) -> datetime.datetime | None:
+    """WordPress modified/date 文字列を naive datetime に正規化する。"""
+    if not value:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(value[:19])
+    except Exception:
+        return None
+
+
+def _lookback_cutoff() -> datetime.datetime:
+    return datetime.datetime.now() - datetime.timedelta(days=LOOKBACK_DAYS)
+
+
+def _brand_records(brand_key: str) -> list[dict]:
+    store     = get_store()
+    brand_cat = BRANDS.get(brand_key, {}).get("category_id")
+    records   = store.list_by_category(brand_cat) if brand_cat else store.list_all()
+    return sorted(records, key=lambda r: r.get("modified", ""), reverse=True)
+
+
+def _prioritized_cached_records(brand_key: str) -> list[dict]:
+    """生成時の重複チェック用キャッシュ。
+
+    通常運用では直近 LOOKBACK_DAYS 日を優先する。古い記事は WordPress へ
+    再取得しに行かず、S3/ローカルに存在するキャッシュだけを参照する。
+    """
+    cutoff = _lookback_cutoff()
+    recent: list[dict] = []
+    older_cached: list[dict] = []
+    for record in _brand_records(brand_key):
+        modified = _parse_modified(record.get("modified", ""))
+        if modified and modified >= cutoff:
+            recent.append(record)
+        else:
+            older_cached.append(record)
+    return recent + older_cached
+
+
 # ─── AWS Bedrock ──────────────────────────────────────────────────────────────
 
 def get_bedrock_client():
@@ -163,8 +259,67 @@ def invoke_claude(prompt: str, max_tokens: int = 8000) -> str:
     return json.loads(resp["body"].read())["content"][0]["text"]
 
 
+def invoke_claude_stream(prompt: str, on_chunk, max_tokens: int = 8000) -> str:
+    """Bedrock のレスポンスストリーミングで本文を生成し、
+    テキスト断片が届くたびに on_chunk(delta_text) を呼ぶ。完成テキストを返す。
+
+    リアルタイムの「生成中」プレビュー用。ストリーミング非対応エラー時は
+    通常の invoke_claude にフォールバックする。
+    """
+    model_id = os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
+    client = get_bedrock_client()
+    body = {
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    try:
+        resp = client.invoke_model_with_response_stream(
+            modelId=model_id,
+            body=json.dumps(body),
+            contentType="application/json",
+            accept="application/json",
+        )
+    except Exception:
+        full = invoke_claude(prompt, max_tokens=max_tokens)
+        if on_chunk:
+            on_chunk(full)
+        return full
+
+    parts: list[str] = []
+    for event in resp["body"]:
+        chunk = event.get("chunk")
+        if not chunk:
+            continue
+        data = json.loads(chunk["bytes"].decode("utf-8"))
+        if data.get("type") == "content_block_delta":
+            text = data.get("delta", {}).get("text", "")
+            if text:
+                parts.append(text)
+                if on_chunk:
+                    on_chunk(text)
+    return "".join(parts)
+
+
+# Embedding 失敗をジョブ単位で追跡するためのスレッドローカル状態。
+# 生成はバックグラウンドスレッドで動くため、スレッドごとに独立して持つ。
+_embed_state = threading.local()
+
+
+def reset_embed_state() -> None:
+    _embed_state.failed = False
+
+
+def embedding_degraded() -> bool:
+    return getattr(_embed_state, "failed", False)
+
+
 def bedrock_embed(text: str) -> list | None:
-    """Titan Embeddings でテキストをベクトル化。失敗時は None（劣化動作）。"""
+    """Titan Embeddings でテキストをベクトル化。失敗時は None（劣化動作）。
+
+    呼び出し例外時はスレッドローカルに失敗フラグを立て、上位で
+    degraded_modes=["embedding_unavailable"] として表面化できるようにする。
+    """
     if not text.strip():
         return None
     try:
@@ -175,8 +330,13 @@ def bedrock_embed(text: str) -> list | None:
             contentType="application/json",
             accept="application/json",
         )
-        return json.loads(resp["body"].read()).get("embedding")
-    except Exception:
+        emb = json.loads(resp["body"].read()).get("embedding")
+        if not emb:
+            _embed_state.failed = True
+        return emb
+    except Exception as e:
+        _embed_state.failed = True
+        log.warning("embed_error err=%s", e)
         return None
 
 
@@ -245,20 +405,29 @@ def scan_wordpress_posts(incremental: bool = True) -> dict:
     auth    = (wp_user, wp_pass) if wp_user and wp_pass else None
     api_base = f"{wp_url.rstrip('/')}/wp-json/wp/v2/posts"
 
-    # 増分スキャン: 最終スキャン以降に modified された記事のみ取得
+    # 増分スキャン: 通常運用では直近 LOOKBACK_DAYS 日を下限にし、
+    # 古い記事の全件再 Embedding を自動実行しない。
     after_param: str | None = None
     if incremental:
         m = store.meta()
         sa = m.get("scanned_at", "")
+        cutoff = _lookback_cutoff()
+        after_dt = cutoff
         if sa:
-            after_param = sa[:19]  # マイクロ秒を除去
+            last = _parse_modified(sa)
+            if last and last > after_dt:
+                after_dt = last
+        after_param = after_dt.isoformat(timespec="seconds")
+        log.info("scan_incremental_window after=%s lookback_days=%s", after_param, LOOKBACK_DAYS)
 
     total_new = total_updated = 0
+    total_skipped = 0
     page = 1
+    _FLUSH_EVERY = 50  # 50件ごとに中間 flush して S3 に保存
 
     while True:
         params: dict = {
-            "per_page":  20,   # content.rendered を含むため小さめに
+            "per_page":  100,  # content.rendered を含むが大きめにして WP I/O を削減
             "page":      page,
             "orderby":   "modified",
             "order":     "desc",
@@ -291,6 +460,7 @@ def scan_wordpress_posts(incremental: bool = True) -> dict:
             existing     = store.get(pid)
 
             if existing and not ArticleVectorStore.needs_reembed(existing, new_hash, EMBED_MODEL_ID):
+                total_skipped += 1
                 continue  # 変更なし・Embedding スキップ
 
             title    = strip_tags(p.get("title",   {}).get("rendered", ""))
@@ -348,7 +518,15 @@ def scan_wordpress_posts(incremental: bool = True) -> dict:
             else:
                 total_new += 1
 
+            # 一定件数ごとに中間 flush（S3 保存）して進捗を保護する
+            if (total_new + total_updated) % _FLUSH_EVERY == 0:
+                store.flush()
+                log.info("scan_progress page=%s new=%s updated=%s skipped=%s",
+                         page, total_new, total_updated, total_skipped)
+
         total_pages = int(resp.headers.get("X-WP-TotalPages", 1))
+        log.info("scan_page page=%s/%s new=%s updated=%s skipped=%s",
+                 page, total_pages, total_new, total_updated, total_skipped)
         if page >= total_pages:
             break
         page += 1
@@ -357,28 +535,47 @@ def scan_wordpress_posts(incremental: bool = True) -> dict:
     m = store.meta()
     m["new_added"] = total_new
     m["updated"]   = total_updated
+    m["skipped"]   = total_skipped
+    log.info("scan_complete total=%s new=%s updated=%s skipped=%s art_emb=%s hdg_emb=%s",
+             m["count"], total_new, total_updated, total_skipped,
+             m["with_article_embedding"], m["with_heading_embeddings"])
     return m
 
 
 def ensure_cache_fresh() -> None:
     """キャッシュが空または CACHE_REFRESH_HOURS より古ければ増分スキャンを実行する。
     失敗時は生成を続行（劣化動作）。
+
+    初回（キャッシュ未作成）はスキャンをバックグラウンドで実行して
+    記事生成をブロックしない。既存キャッシュがあれば同期実行（増分のみ）。
     """
     m          = get_store().meta()
     scanned_at = m.get("scanned_at", "")
-    needs      = not scanned_at or not m.get("count")
-    if not needs and scanned_at:
-        try:
-            last  = datetime.datetime.fromisoformat(scanned_at)
-            age_h = (datetime.datetime.now() - last).total_seconds() / 3600
-            needs = age_h >= CACHE_REFRESH_HOURS
-        except Exception:
-            needs = True
+    count      = m.get("count", 0)
+
+    # 初回: ローカルキャッシュが存在しない or 空
+    # → バックグラウンドで走らせて生成はすぐ開始する。
+    #   _run_scan_locked が二重起動を防ぐので、連打されても 1 本だけ走る。
+    # 通常導線では全件再 Embedding を走らせず、直近 LOOKBACK_DAYS 日だけを見る。
+    # 全件構築は scripts/article_generator/embed_all.py を手動実行する。
+    if not scanned_at or not count:
+        if not _SCAN_STATE["running"]:
+            threading.Thread(
+                target=_run_scan_locked, args=(True,), daemon=True
+            ).start()
+        return  # 生成を即ブロック解除
+
+    # 2 回目以降: キャッシュが古ければ増分スキャン（短時間・同期）
+    needs = False
+    try:
+        last  = datetime.datetime.fromisoformat(scanned_at)
+        age_h = (datetime.datetime.now() - last).total_seconds() / 3600
+        needs = age_h >= CACHE_REFRESH_HOURS
+    except Exception:
+        needs = True
+
     if needs:
-        try:
-            scan_wordpress_posts(incremental=True)
-        except Exception:
-            pass
+        _run_scan_locked(incremental=True)
 
 
 # ─── 類似度チェック ───────────────────────────────────────────────────────────
@@ -393,9 +590,7 @@ def check_overlap(brand_key: str, title: str, h2s: list[str]) -> dict:
     戻り値: {"ok": bool, "flagged": [{"title", "url", "article_similarity",
                                        "heading_hit_count", "hit_pairs", "h2_texts"}, ...]}
     """
-    store     = get_store()
-    brand_cat = BRANDS.get(brand_key, {}).get("category_id")
-    past_arts = store.list_by_category(brand_cat) if brand_cat else store.list_all()
+    past_arts = _prioritized_cached_records(brand_key)
 
     # 候補の article-level embedding
     art_text = title + "。" + "。".join(h2s)
@@ -473,9 +668,7 @@ def check_ngram_overlap(generated_text: str, brand_key: str) -> list[dict]:
     if not gen_grams:
         return []
 
-    store     = get_store()
-    brand_cat = BRANDS.get(brand_key, {}).get("category_id")
-    past_arts = store.list_by_category(brand_cat) if brand_cat else store.list_all()
+    past_arts = _prioritized_cached_records(brand_key)
 
     flagged: list[dict] = []
     for art in past_arts:
@@ -539,10 +732,7 @@ def sample_past_titles(brand_key: str, limit: int = 14) -> list[str]:
     新しい記事ほど現行の文体に近いので modified 降順で返す。
     キャッシュが空なら空リスト（その場合は参考なしで生成）。
     """
-    store     = get_store()
-    brand_cat = BRANDS.get(brand_key, {}).get("category_id")
-    records   = store.list_by_category(brand_cat) if brand_cat else store.list_all()
-    records   = sorted(records, key=lambda r: r.get("modified", ""), reverse=True)
+    records   = _prioritized_cached_records(brand_key)
     titles: list[str] = []
     for r in records:
         t = (r.get("title") or "").strip()
@@ -732,6 +922,15 @@ def build_article_prompt(
                 lines.append(f"  ↳ 章「{p['past']}」と類似 → 同じ切り口・具体例・導入を避ける")
         avoid_block = "━━━━━ 内容が被ってはいけない既存記事 ━━━━━\n" + "\n".join(lines) + "\n"
 
+    purchase_block = f"""━━━━━ 購買意欲を高める方針 ━━━━━
+- 読者が「{brand_jp} を実際に探してみたい・手に入れたい」と感じる読後感を目指す。
+- 資産価値・状態の見極め・長く使う満足感など、所有/購入の魅力を具体的に描く。
+- 過去記事の口調・見出し設計は「参考」にとどめ、本文の構成・切り口・具体例は被らせない。
+- 煽り・誇張・断定は避け、信頼できる専門メディアとして購買の背中を押す。
+- CTA はブランドカテゴリページ（{cta_base}）に誘導し、個別商品ページには誘導しない。
+
+"""
+
     return f"""あなたは FIRE KIDS Magazine の記事ライターです。
 以下の条件に従い、ヴィンテージ時計の SEO 記事（Markdown 形式）を1本生成してください。
 
@@ -743,7 +942,7 @@ def build_article_prompt(
 キーワード: {keywords}
 生成日: {datetime.date.today().strftime("%Y.%m.%d")}
 
-{inventory_block}{avoid_block}
+{purchase_block}{inventory_block}{avoid_block}
 ━━━━━ データソース情報 ━━━━━
 {caliber_summary}
 {correction_summary}
@@ -791,39 +990,67 @@ def build_article_prompt(
 
 # ─── 生成オーケストレーション ─────────────────────────────────────────────────
 
-def generate_article(brand_key: str, tone: str = "auto", fk_id: str = "") -> dict:
+def generate_article(brand_key: str, tone: str = "auto", fk_id: str = "",
+                     on_stage=None, on_chunk=None, allow_no_inventory: bool = False) -> dict:
     """3 ステージ生成フロー + 後処理 n-gram チェック。
 
-    fk_id が指定された場合は在庫連携モード:
-      - 在庫 CSV から商品情報を取得してブランドキーを上書き
-      - propose_structure / build_article_prompt にアイテム情報を注入
+    在庫連携:
+      - fk_id 指定時: 在庫 CSV から商品情報を取得（ブランド上書き）
+      - fk_id 未指定（ブランドのみ）時: select_feature_item() で記事軸を自動選定
+        在庫が無く allow_no_inventory=False なら InventoryMissingError を送出
+
+    on_stage(msg, stage_id): 進行状況（UI 表示 + ログ）
+    on_chunk(text): 本文生成中のテキスト断片（リアルタイムプレビュー）
 
     1. ensure_cache_fresh()     — 増分スキャン（必要時のみ）
     2. propose_structure()      — タイトル + H2 構成案（小型コール）
     3. check_overlap() × N      — 2 レベル被り検出 + 再構成
     4. build_article_prompt()   — 本文プロンプト構築
-    5. invoke_claude()          — 本文生成（大型コール）
+    5. invoke_claude_stream()   — 本文生成（大型コール・ストリーミング）
     6. check_ngram_overlap()    — n-gram 重複チェック（警告のみ）
     """
+    def stage(msg: str, stage_id: str = "") -> None:
+        if on_stage:
+            try:
+                on_stage(msg, stage_id)
+            except TypeError:
+                on_stage(msg)
+
+    reset_embed_state()
+
+    stage("過去記事を照合しています…", "cache_check")
+    cache_had_data = get_store().meta().get("count", 0) > 0
     ensure_cache_fresh()
 
-    # 在庫連携モード: FK番号でアイテムを取得
+    # ── アイテム決定 ───────────────────────────────────────────────
     item: dict | None = None
     if fk_id:
         item = find_by_fk(fk_id)
         if item:
             brand_key = item["brand_key"]  # ブランドを在庫データから上書き
+    else:
+        # ブランドのみ指定 → 記事軸の在庫を自動選定
+        item = select_feature_item(brand_key)
+        if item is None and not allow_no_inventory:
+            # 在庫があるアプリ（loaded）でブランド在庫ゼロのときだけ中断。
+            # CSV 自体が未ロードの場合は一般記事として続行する。
+            if inventory_summary().get("loaded"):
+                raise InventoryMissingError(brand_key)
 
+    stage("被らないテーマ・構成を考えています…", "prompt_build")
     structure  = propose_structure(brand_key, tone, item=item)
-    # auto モードでは Claude が選んだ記事タイプを以降の本文生成にも引き継ぐ
     effective_tone = structure.get("tone") or (tone if tone and tone != "auto" else "guide")
     overlap    = {"ok": True, "flagged": []}
 
+    stage("過去記事との被りをチェックしています…")
     for attempt in range(MAX_REGEN_RETRIES):
         overlap = check_overlap(brand_key, structure.get("title", ""), structure.get("h2s", []))
         if overlap["ok"]:
             break
         if attempt < MAX_REGEN_RETRIES - 1:
+            stage("構成を調整しています…")
+            log.info("structure_revise brand=%s attempt=%s flagged=%s",
+                     brand_key, attempt + 1, len(overlap.get("flagged", [])))
             structure = revise_structure(brand_key, effective_tone, structure, overlap["flagged"])
 
     title    = structure.get("title")    or f"{BRANDS[brand_key]['jp']} 特集記事"
@@ -832,10 +1059,33 @@ def generate_article(brand_key: str, tone: str = "auto", fk_id: str = "") -> dic
     keywords = structure.get("keywords", "")
 
     prompt  = build_article_prompt(brand_key, effective_tone, title, theme, keywords, overlap.get("flagged", []), item=item)
-    article = invoke_claude(prompt)
+    stage("本文を執筆しています…", "bedrock_call")
+    if on_chunk:
+        article = invoke_claude_stream(prompt, on_chunk)
+    else:
+        article = invoke_claude(prompt)
 
+    stage("仕上げチェック中…")
     slug         = title_to_slug(title)
     ngram_issues = check_ngram_overlap(article, brand_key)
+
+    # ── 劣化モード / 重複ステータスの判定 ─────────────────────────
+    degraded_modes: list[str] = []
+    if embedding_degraded():
+        degraded_modes.append("embedding_unavailable")
+
+    if embedding_degraded() or not cache_had_data:
+        overlap_status = "unchecked"   # 過去記事チェックが信頼できない
+    elif overlap["ok"]:
+        overlap_status = "ok"
+    else:
+        overlap_status = "flagged"
+
+    tone_titles = sample_past_titles(brand_key, limit=6)
+    tone_reference_summary = (
+        "過去記事の口調・見出し設計を参考: " + " / ".join(tone_titles)
+        if tone_titles else "参考にできる過去記事が見つかりませんでした"
+    )
 
     return {
         "title":        title,
@@ -845,9 +1095,16 @@ def generate_article(brand_key: str, tone: str = "auto", fk_id: str = "") -> dic
         "keywords":     keywords,
         "theme":        theme,
         "article":      article,
+        "html":         markdown_to_wp_html(article),
         "slug":         slug,
+        "brand_key":    brand_key,
+        "brand_jp":     BRANDS.get(brand_key, {}).get("jp", brand_key),
         "overlap_ok":   overlap["ok"],
+        "overlap_status": overlap_status,
+        "degraded_modes": degraded_modes,
         "ngram_issues": ngram_issues,
+        "item_summary": summarize_item(item) if item else "",
+        "tone_reference_summary": tone_reference_summary,
         "fk_id":        fk_id,
         "item":         item,
     }
@@ -878,6 +1135,88 @@ def title_to_slug(title: str) -> str:
     result = re.sub(r"[\s_]+", "-", result.strip())
     result = re.sub(r"-{2,}", "-", result).strip("-")
     return (result or "article")[:60]
+
+
+def markdown_to_wp_html(md: str) -> str:
+    """記事 Markdown を WordPress 投稿用の最小限の HTML へ変換する（依存ライブラリ無し）。
+
+    見出し / 段落 / 箇条書き / 番号付きリスト / テーブル / 水平線 / 強調 / リンクに対応。
+    投稿の本文用途であり、プレビューは引き続き marked.js を使う。
+    """
+    lines = md.replace("\r\n", "\n").split("\n")
+    # 先頭の H1（タイトル）とフロントマター（--- ... ---）は本文から除外
+    out: list[str] = []
+    i = 0
+
+    def inline(text: str) -> str:
+        text = (text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+        text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", text)
+        text = re.sub(r"(?<!\*)\*(?!\s)(.+?)(?<!\s)\*(?!\*)", r"<em>\1</em>", text)
+        text = re.sub(r"\[(.+?)\]\((https?://[^\s)]+)\)", r'<a href="\2">\1</a>', text)
+        return text
+
+    # 先頭 H1 を捨てる
+    while i < len(lines) and lines[i].strip() == "":
+        i += 1
+    if i < len(lines) and re.match(r"^#\s+", lines[i]):
+        i += 1
+
+    n = len(lines)
+    while i < n:
+        line = lines[i]
+        s = line.strip()
+        if s == "":
+            i += 1
+            continue
+        if re.match(r"^-{3,}$", s):
+            out.append("<hr />")
+            i += 1
+            continue
+        m = re.match(r"^(#{2,4})\s+(.*)$", s)
+        if m:
+            level = len(m.group(1))
+            out.append(f"<h{level}>{inline(m.group(2).strip())}</h{level}>")
+            i += 1
+            continue
+        # テーブル（| a | b | 行が連続し、2行目が区切り）
+        if s.startswith("|") and i + 1 < n and re.match(r"^\|[\s:\-|]+\|?$", lines[i + 1].strip()):
+            header = [c.strip() for c in s.strip("|").split("|")]
+            i += 2
+            rows = []
+            while i < n and lines[i].strip().startswith("|"):
+                rows.append([c.strip() for c in lines[i].strip().strip("|").split("|")])
+                i += 1
+            thead = "".join(f"<th>{inline(c)}</th>" for c in header)
+            tbody = "".join(
+                "<tr>" + "".join(f"<td>{inline(c)}</td>" for c in r) + "</tr>" for r in rows
+            )
+            out.append(f"<table><thead><tr>{thead}</tr></thead><tbody>{tbody}</tbody></table>")
+            continue
+        # 箇条書き
+        if re.match(r"^[-*]\s+", s):
+            items = []
+            while i < n and re.match(r"^[-*]\s+", lines[i].strip()):
+                items.append("<li>" + inline(re.sub(r"^[-*]\s+", "", lines[i].strip())) + "</li>")
+                i += 1
+            out.append("<ul>" + "".join(items) + "</ul>")
+            continue
+        # 番号付きリスト
+        if re.match(r"^\d+\.\s+", s):
+            items = []
+            while i < n and re.match(r"^\d+\.\s+", lines[i].strip()):
+                items.append("<li>" + inline(re.sub(r"^\d+\.\s+", "", lines[i].strip())) + "</li>")
+                i += 1
+            out.append("<ol>" + "".join(items) + "</ol>")
+            continue
+        # 段落（空行まで結合）
+        para = [s]
+        i += 1
+        while i < n and lines[i].strip() != "" and not re.match(r"^(#{2,4}\s|[-*]\s|\d+\.\s|\||-{3,}$)", lines[i].strip()):
+            para.append(lines[i].strip())
+            i += 1
+        out.append(f"<p>{inline(' '.join(para))}</p>")
+
+    return "\n".join(out)
 
 
 def save_article(brand_key: str, slug: str, content: str) -> Path:
@@ -916,10 +1255,12 @@ def generate():
     生成処理（1〜3 分）を同期で返すと必ず 504 になる。
     クライアントは GET /generate-status/<job_id> を 3 秒ごとにポーリングして結果を取得する。
     """
-    data      = request.get_json(silent=True) or {}
-    brand_key = data.get("brand", "ROLEX")
-    tone      = data.get("tone",  "auto")
-    fk_id     = data.get("fk_id", "")
+    data        = request.get_json(silent=True) or {}
+    brand_key   = data.get("brand", "ROLEX")
+    tone        = data.get("tone",  "auto")
+    fk_id       = data.get("fk_id", "")
+    allow_no_inv = bool(data.get("allow_no_inventory", False))
+    mode        = "inventory" if fk_id else "brand"
 
     job_id = str(uuid.uuid4())
     with _JOB_LOCK:
@@ -928,20 +1269,46 @@ def generate():
             "created_at": time.time(),
             "result":     None,
             "error":      None,
+            "stage":      "生成を開始しています…",
+            "partial":    "",
         }
+    log.info("job_created job_id=%s brand=%s mode=%s", job_id, brand_key, mode)
 
     def _run(jid: str, bk: str, t: str, fk: str) -> None:
+        def on_stage(msg: str, stage_id: str = "") -> None:
+            with _JOB_LOCK:
+                if jid in JOBS:
+                    JOBS[jid]["stage"] = msg
+            if stage_id:
+                log.info("job_stage job_id=%s stage=%s", jid, stage_id)
+
+        def on_chunk(text: str) -> None:
+            with _JOB_LOCK:
+                if jid in JOBS:
+                    JOBS[jid]["partial"] += text
+
+        log.info("job_thread_started job_id=%s", jid)
         try:
-            result = generate_article(bk, t, fk_id=fk)
+            result = generate_article(
+                bk, t, fk_id=fk, on_stage=on_stage, on_chunk=on_chunk,
+                allow_no_inventory=allow_no_inv,
+            )
             with _JOB_LOCK:
                 JOBS[jid]["status"] = "done"
+                JOBS[jid]["stage"]  = "完成しました"
                 JOBS[jid]["result"] = {k: v for k, v in result.items() if k != "item"}
-                # セッションへの書き込みはスレッドから行えないため
-                # クライアントが /generate-status で受け取った後に /set-draft で保存する
+            log.info("job_done job_id=%s degraded=%s overlap=%s",
+                     jid, result.get("degraded_modes"), result.get("overlap_status"))
+        except InventoryMissingError:
+            with _JOB_LOCK:
+                JOBS[jid]["status"] = "inventory_missing"
+                JOBS[jid]["error"]  = f"{BRANDS.get(bk, {}).get('jp', bk)} の在庫が見つかりませんでした"
+            log.info("job_inventory_missing job_id=%s brand=%s", jid, bk)
         except Exception as e:
             with _JOB_LOCK:
                 JOBS[jid]["status"] = "error"
                 JOBS[jid]["error"]  = str(e)
+            log.warning("job_error job_id=%s err=%s", jid, e)
 
     threading.Thread(target=_run, args=(job_id, brand_key, tone, fk_id), daemon=True).start()
     _cleanup_jobs()
@@ -976,9 +1343,14 @@ def generate_status(job_id: str):
     if job["status"] == "error":
         return jsonify({"status": "error", "error": job.get("error", "不明なエラー")})
 
-    # まだ running
+    # まだ running — 進行状況と生成途中の本文を返す
     elapsed = int(time.time() - job.get("created_at", time.time()))
-    return jsonify({"status": "running", "elapsed": elapsed})
+    return jsonify({
+        "status":  "running",
+        "elapsed": elapsed,
+        "stage":   job.get("stage", ""),
+        "partial": job.get("partial", ""),
+    })
 
 
 @app.route("/inventory-items")
@@ -1037,12 +1409,14 @@ def save():
 
 @app.route("/scan", methods=["POST"])
 def scan():
-    """手動スキャン（増分）。通常は生成時に自動実行されるため任意。"""
-    try:
-        m = scan_wordpress_posts(incremental=True)
-        return jsonify({"ok": True, **m})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)})
+    """手動スキャン（増分）。ロック付きで多重起動を防止する。"""
+    if _SCAN_STATE["running"]:
+        return jsonify({"ok": False, "error": "スキャンは既に実行中です", "running": True})
+    started = _run_scan_locked(incremental=True)
+    if not started:
+        return jsonify({"ok": False, "error": "スキャンは既に実行中です", "running": True})
+    m = get_store().meta()
+    return jsonify({"ok": True, **m, "last_error": _SCAN_STATE["last_error"]})
 
 
 @app.route("/scan-status")
@@ -1050,9 +1424,17 @@ def scan_status():
     m = get_store().meta()
     return jsonify({
         "exists":                  m.get("count", 0) > 0,
+        "running":                 _SCAN_STATE["running"],
+        "last_started_at":         _SCAN_STATE["last_started_at"],
+        "last_finished_at":        _SCAN_STATE["last_finished_at"],
+        "last_error":              _SCAN_STATE["last_error"],
+        "article_count":           m.get("count", 0),
         "count":                   m.get("count", 0),
         "with_article_embedding":  m.get("with_article_embedding", 0),
         "with_heading_embeddings": m.get("with_heading_embeddings", 0),
+        "cache_source":            m.get("cache_source", "empty"),
+        "lookback_days":           LOOKBACK_DAYS,
+        "degraded_modes":          _SCAN_STATE["degraded_modes"],
         "scanned_at":              m.get("scanned_at", ""),
     })
 
@@ -1063,11 +1445,11 @@ def ping():
     inv     = inventory_summary()
     return jsonify({
         "ok":              True,
-        "aws_key_set":     bool(aws_key),
-        "aws_key_prefix":  aws_key[:8] + "..." if aws_key else "(未設定)",
+        "aws_configured":  bool(aws_key and os.getenv("AWS_SECRET_ACCESS_KEY")),
         "bedrock_model":   os.getenv("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6"),
         "embed_model":     EMBED_MODEL_ID,
         "region":          os.getenv("AWS_REGION", "us-east-1"),
+        "lookback_days":   LOOKBACK_DAYS,
         "cache_exists":    get_store().meta().get("count", 0) > 0,
         "inventory_count": inv["total"],
         "inventory_loaded": inv["loaded"],
@@ -1077,4 +1459,4 @@ def ping():
 if __name__ == "__main__":
     port = int(os.getenv("GENERATOR_PORT", 8001))
     print(f"記事生成アプリ起動: http://localhost:{port}")
-    app.run(debug=True, port=port, host="127.0.0.1")
+    app.run(debug=True, port=port, host="127.0.0.1", use_reloader=False)

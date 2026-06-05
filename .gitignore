@@ -17,6 +17,16 @@ scripts/wp_uploader_local/.env
 scripts/wp_unpublisher_local/.env
 deploy/env.production
 
+# App Runner デプロイ用の生成JSON（実シークレットを含む・絶対に追跡しない）
+deploy/_source-config*.json
+deploy/_create-service*.json
+deploy/_trust-policy*.json
+
+# 過去記事 / ベクトルキャッシュ（運用データ・Git管理しない）
+scripts/article_generator/*cache*.json
+scripts/article_generator/past_articles_cache.json
+scripts/article_generator/article_vector_cache.json
+
 # ============================================
 # Python
 # ============================================

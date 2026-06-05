@@ -168,40 +168,38 @@ def _read_local(path: Path) -> str | None:
         return None
 
 
+def _s3_client():
+    """S3 専用クライアント。Bedrock 用の AWS_REGION とは独立した S3_REGION を使う。"""
+    import boto3
+    return boto3.client(
+        "s3",
+        region_name=os.getenv("S3_REGION", os.getenv("AWS_REGION", "ap-northeast-1")),
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+    )
+
+
 def _read_s3() -> str | None:
+    """S3 から在庫 CSV を読み込む。S3_REGION / INVENTORY_S3_KEY を使用する。"""
     bucket = os.getenv("S3_BUCKET", "")
-    key    = os.getenv("INVENTORY_S3_KEY", "inventory.csv")
+    key    = os.getenv("INVENTORY_S3_KEY", "inventory/inventory.csv")
     if not bucket:
         return None
     try:
-        import boto3
-        s3 = boto3.client(
-            "s3",
-            region_name=os.getenv("AWS_REGION", "us-east-1"),
-            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-        )
-        obj = s3.get_object(Bucket=bucket, Key=key)
+        obj = _s3_client().get_object(Bucket=bucket, Key=key)
         return _decode(obj["Body"].read())
     except Exception:
         return None
 
 
 def write_s3(csv_bytes: bytes) -> bool:
-    """S3 に CSV バイト列をアップロードする。成功したら True。"""
+    """S3 に CSV バイト列をアップロードする。S3_REGION / INVENTORY_S3_KEY を使用する。成功したら True。"""
     bucket = os.getenv("S3_BUCKET", "")
-    key    = os.getenv("INVENTORY_S3_KEY", "inventory.csv")
+    key    = os.getenv("INVENTORY_S3_KEY", "inventory/inventory.csv")
     if not bucket:
         return False
     try:
-        import boto3
-        s3 = boto3.client(
-            "s3",
-            region_name=os.getenv("AWS_REGION", "us-east-1"),
-            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-        )
-        s3.put_object(Bucket=bucket, Key=key, Body=csv_bytes, ContentType="text/csv")
+        _s3_client().put_object(Bucket=bucket, Key=key, Body=csv_bytes, ContentType="text/csv")
         return True
     except Exception:
         return False
@@ -261,6 +259,76 @@ def get_in_stock(brand_key: str | None = None) -> list[dict]:
 def find_by_fk(fk_id: str) -> dict | None:
     """FK 番号でアイテムを検索する。"""
     return next((i for i in load_inventory() if i["fk_id"] == fk_id), None)
+
+
+# ── 記事軸の自動選定 ──────────────────────────────────────────────
+
+# 備考・特記事項に含まれていると「推し」度が上がるキーワード
+_HIGHLIGHT_KEYWORDS = (
+    "希少", "レア", "美品", "極美", "OH済", "オーバーホール", "整備", "新品",
+    "未使用", "フルセット", "付属", "保証書", "ギャラ", "純正", "限定", "貴重",
+)
+
+
+def _feature_score(item: dict) -> tuple:
+    """記事軸としての魅力度スコア（決定的）。タプルで降順比較する。
+
+    情報量が多く、販売対象として掲載済みで、推しメモがある個体ほど高評価。
+    同点時は fk_id 昇順で安定させるため、末尾に -fk_num を入れる。
+    """
+    score = 0
+    # 掲載済み（HP掲載日あり）は記事化の前提として強く加点
+    if item.get("is_listed"):
+        score += 5
+    # スペック情報の充実度
+    if item.get("model"):  score += 2
+    if item.get("era"):    score += 2
+    if item.get("ref"):    score += 2
+    if item.get("cal"):    score += 2
+    if item.get("list_price"): score += 1
+    notes = item.get("notes", "") or ""
+    if notes:
+        score += 1
+        # 備考が長い（情報量が多い）ほど僅かに加点（上限あり）
+        score += min(len(notes) // 40, 3)
+    # 推しキーワード
+    flags_text = (notes + " " + (item.get("flags", "") or ""))
+    score += sum(1 for kw in _HIGHLIGHT_KEYWORDS if kw in flags_text)
+
+    # fk_id を数値化して決定的タイブレーク（小さい＝古い在庫を優先）
+    try:
+        fk_num = int(re.sub(r"\D", "", item.get("fk_id", "0")) or 0)
+    except ValueError:
+        fk_num = 0
+    return (score, -fk_num)
+
+
+def select_feature_item(brand_key: str) -> dict | None:
+    """ブランド指定だけで生成する際、記事軸にする在庫時計を1点だけ決定的に選ぶ。
+
+    条件: 当該ブランドの在庫（売却済みでない）かつ掲載済みを優先。
+    掲載済みが無ければ在庫全体から、それも無ければ None。
+    """
+    items = get_in_stock(brand_key)
+    if not items:
+        return None
+    listed = [i for i in items if i.get("is_listed")]
+    pool = listed if listed else items
+    return max(pool, key=_feature_score)
+
+
+def summarize_item(item: dict) -> str:
+    """UI 表示用の「今回の記事軸」1行要約（FK番号は含めない）。"""
+    parts = [item.get("brand_raw", "")]
+    if item.get("model"):
+        parts.append(item["model"])
+    if item.get("era"):
+        parts.append(f"{item['era']}年代")
+    if item.get("ref"):
+        parts.append(f"Ref.{item['ref']}")
+    if item.get("cal"):
+        parts.append(f"Cal.{item['cal']}")
+    return " / ".join([p for p in parts if p])
 
 
 def format_for_prompt(item: dict) -> str:
