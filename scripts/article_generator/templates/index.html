@@ -617,7 +617,9 @@ function stopLoad() {
   setTimeout(() => { document.getElementById('loading').className = 'loading-wrap'; }, 400);
 }
 
-/* ── 生成 ───────────────────────────────────────────── */
+/* ── 生成（非同期ポーリング方式）────────────────────── */
+// App Runner のロードバランサーは ~120 秒でタイムアウトするため、
+// POST /generate → job_id を即取得 → 3 秒ごとに /generate-status/<job_id> をポーリング
 async function generate() {
   const btn = document.getElementById('gen-btn');
   let payload;
@@ -630,14 +632,59 @@ async function generate() {
   }
   btn.disabled = true;
   startLoad();
+
   try {
-    const res  = await fetch('generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    const data = await res.json();
+    // Step 1: ジョブ開始（即座に job_id が返る）
+    const startRes  = await fetch('generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const startData = await startRes.json();
+    if (!startData.ok || !startData.job_id) {
+      stopLoad();
+      alert('生成開始に失敗しました: ' + (startData.error || '不明なエラー'));
+      btn.disabled = false;
+      return;
+    }
+
+    // Step 2: ポーリング（3 秒ごと・最大 10 分）
+    const jobId = startData.job_id;
+    const MAX_POLLS = 200; // 3s × 200 = 600s = 10 分
+    for (let i = 0; i < MAX_POLLS; i++) {
+      await new Promise(r => setTimeout(r, 3000));
+      let poll;
+      try {
+        poll = await fetch('generate-status/' + jobId).then(r => r.json());
+      } catch(e) {
+        continue; // ネットワーク一時エラーは無視して継続
+      }
+      if (poll.status === 'done') {
+        stopLoad();
+        window.location.href = 'review';
+        return;
+      }
+      if (poll.status === 'error') {
+        stopLoad();
+        alert('生成失敗: ' + (poll.error || '不明なエラー'));
+        btn.disabled = false;
+        return;
+      }
+      if (poll.status === 'not_found') {
+        stopLoad();
+        alert('ジョブが見つかりません。もう一度お試しください。');
+        btn.disabled = false;
+        return;
+      }
+      // running のまま → 次のポーリングへ
+    }
     stopLoad();
-    if (data.ok) window.location.href = 'review';
-    else alert('生成失敗: ' + data.error);
-  } catch(e) { stopLoad(); alert('エラー: ' + e.message); }
-  finally { btn.disabled = false; }
+    alert('タイムアウトしました（10 分経過）。もう一度お試しください。');
+  } catch(e) {
+    stopLoad();
+    alert('エラー: ' + e.message);
+  }
+  btn.disabled = false;
 }
 
 /* ── 初期化 ─────────────────────────────────────────── */

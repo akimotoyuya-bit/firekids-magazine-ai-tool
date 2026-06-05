@@ -37,11 +37,14 @@ import math
 import os
 import re
 import sys
+import threading
+import time
+import uuid
 from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template, request, session
+from flask import Flask, jsonify, render_template, request, session, Response
 
 # 兄弟モジュール（vector_store / inventory）を、
 # - ローカル実行（python app.py / cwd=このフォルダ）
@@ -65,6 +68,25 @@ load_dotenv(ROOT / "scripts" / "article_generator" / ".env", override=True)
 
 app = Flask(__name__)
 app.secret_key = os.getenv("APP_SECRET_KEY", "firekids-default-secret-change-me")
+
+# ─── 非同期ジョブストア ────────────────────────────────────────────────────────
+# App Runner のロードバランサーは ~120 秒でタイムアウトするため、
+# 記事生成（1〜3 分）を同期 HTTP で返すと必ず 504 になる。
+# → POST /generate で即座に job_id を返し、バックグラウンドで生成。
+# → GET /generate-status/<job_id> で完了を 3 秒ごとにポーリング。
+# gunicorn は 1 worker + 複数スレッドで動かすことで JOBS dict を共有する。
+_JOB_LOCK: threading.Lock = threading.Lock()
+JOBS: dict[str, dict] = {}
+_JOB_TTL_SECONDS = 1800  # 30 分で古いジョブを削除
+
+
+def _cleanup_jobs() -> None:
+    """古いジョブを定期削除（メモリリーク防止）。"""
+    cutoff = time.time() - _JOB_TTL_SECONDS
+    with _JOB_LOCK:
+        expired = [jid for jid, j in JOBS.items() if j.get("created_at", 0) < cutoff]
+        for jid in expired:
+            JOBS.pop(jid, None)
 
 # ─── 定数 ────────────────────────────────────────────────────────────────────
 
@@ -888,19 +910,75 @@ def review():
 
 @app.route("/generate", methods=["POST"])
 def generate():
+    """記事生成を非同期ジョブとして開始し、job_id を即座に返す。
+
+    App Runner のロードバランサーは ~120 秒でタイムアウトするため、
+    生成処理（1〜3 分）を同期で返すと必ず 504 になる。
+    クライアントは GET /generate-status/<job_id> を 3 秒ごとにポーリングして結果を取得する。
+    """
     data      = request.get_json(silent=True) or {}
     brand_key = data.get("brand", "ROLEX")
-    tone      = data.get("tone",  "auto")  # 既定: トーン自動選定（ブランドのみ運用）
-    fk_id     = data.get("fk_id", "")      # 在庫連携モード（任意）
-    try:
-        result = generate_article(brand_key, tone, fk_id=fk_id)
-        session["draft_article"] = result["article"]
-        session["draft_brand"]   = result.get("item", {}).get("brand_key", brand_key) if result.get("item") else brand_key
-        session["draft_slug"]    = result["slug"]
-        session["draft_title"]   = result["title"]
-        return jsonify({"ok": True, **{k: v for k, v in result.items() if k != "item"}})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)})
+    tone      = data.get("tone",  "auto")
+    fk_id     = data.get("fk_id", "")
+
+    job_id = str(uuid.uuid4())
+    with _JOB_LOCK:
+        JOBS[job_id] = {
+            "status":     "running",
+            "created_at": time.time(),
+            "result":     None,
+            "error":      None,
+        }
+
+    def _run(jid: str, bk: str, t: str, fk: str) -> None:
+        try:
+            result = generate_article(bk, t, fk_id=fk)
+            with _JOB_LOCK:
+                JOBS[jid]["status"] = "done"
+                JOBS[jid]["result"] = {k: v for k, v in result.items() if k != "item"}
+                # セッションへの書き込みはスレッドから行えないため
+                # クライアントが /generate-status で受け取った後に /set-draft で保存する
+        except Exception as e:
+            with _JOB_LOCK:
+                JOBS[jid]["status"] = "error"
+                JOBS[jid]["error"]  = str(e)
+
+    threading.Thread(target=_run, args=(job_id, brand_key, tone, fk_id), daemon=True).start()
+    _cleanup_jobs()
+    return jsonify({"ok": True, "job_id": job_id})
+
+
+@app.route("/generate-status/<job_id>")
+def generate_status(job_id: str):
+    """ジョブの完了状態を返す。ポーリング用エンドポイント。
+
+    status:
+      running  — 生成中（3 秒後に再ポーリング）
+      done     — 完了（result フィールドに記事データ）
+      error    — 失敗（error フィールドにエラーメッセージ）
+      not_found — job_id が存在しない（再生成を促す）
+    """
+    with _JOB_LOCK:
+        job = JOBS.get(job_id)
+
+    if job is None:
+        return jsonify({"status": "not_found"})
+
+    if job["status"] == "done":
+        result = job["result"] or {}
+        # セッション保存（ポーリング成功時に行う）
+        session["draft_article"] = result.get("article", "")
+        session["draft_brand"]   = result.get("brand_key", "ROLEX")
+        session["draft_slug"]    = result.get("slug", "article")
+        session["draft_title"]   = result.get("title", "")
+        return jsonify({"status": "done", "result": result})
+
+    if job["status"] == "error":
+        return jsonify({"status": "error", "error": job.get("error", "不明なエラー")})
+
+    # まだ running
+    elapsed = int(time.time() - job.get("created_at", time.time()))
+    return jsonify({"status": "running", "elapsed": elapsed})
 
 
 @app.route("/inventory-items")
