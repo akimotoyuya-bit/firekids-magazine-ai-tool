@@ -743,7 +743,8 @@ def sample_past_titles(brand_key: str, limit: int = 14) -> list[str]:
     return titles
 
 
-def propose_structure(brand_key: str, tone: str = "auto", item: dict | None = None) -> dict:
+def propose_structure(brand_key: str, tone: str = "auto", item: dict | None = None,
+                      direction: str = "") -> dict:
     """タイトル・H2 構成案・テーマ・キーワードを小型コール（最大 800 トークン）で生成する。
 
     tone:
@@ -790,9 +791,18 @@ def propose_structure(brand_key: str, tone: str = "auto", item: dict | None = No
     else:
         item_block = ""
 
+    direction_block = ""
+    if direction:
+        direction_block = f"""【今回ユーザーが寄せたい方向性】
+{direction}
+
+この方向性を優先して企画してください。ただし事実確認できない内容、価格断定、個別商品URL、FK番号は使わないでください。
+"""
+
     prompt = f"""FIRE KIDS Magazine の「{brand_jp}」ブランド記事を1本企画してください。
 {tone_directive}
 {item_block}
+{direction_block}
 {style_block}SEO 効果が高く、読者が具体的に求めているテーマを選んでください。
 
 以下の JSON 形式のみで出力してください（前後に説明文を付けない）:
@@ -823,7 +833,8 @@ def propose_structure(brand_key: str, tone: str = "auto", item: dict | None = No
             "h2s": [], "theme": raw.strip()[:200], "keywords": ""}
 
 
-def revise_structure(brand_key: str, tone: str, previous: dict, flagged: list) -> dict:
+def revise_structure(brand_key: str, tone: str, previous: dict, flagged: list,
+                     direction: str = "") -> dict:
     """被りが検出された構成案を類似記事情報を与えて再構成させる。
 
     flagged: check_overlap() の flagged リスト
@@ -840,6 +851,7 @@ def revise_structure(brand_key: str, tone: str, previous: dict, flagged: list) -
                 f"（類似度 {p['similarity']}）"
             )
     conflict_text = "\n".join(lines) if lines else "（詳細なし）"
+    direction_block = f"\n【維持したい方向性】\n{direction}\n" if direction else ""
 
     prompt = f"""FIRE KIDS Magazine の「{brand_jp}」ブランド記事（{tone_jp}）の企画を修正してください。
 
@@ -849,6 +861,7 @@ H2 構成: {json.dumps(previous.get('h2s', []), ensure_ascii=False)}
 
 【被りが検出された既存記事との比較】
 {conflict_text}
+{direction_block}
 
 上記の章立て・切り口と重複しない新しい企画案を出してください。
 同じブランドでも全く別の角度（対象年代・モデル系統・読者層・技術視点など）を選んでください。
@@ -885,6 +898,7 @@ def build_article_prompt(
     keywords: str,
     avoid_articles: list,   # check_overlap の flagged リスト
     item: dict | None = None,
+    direction: str = "",
 ) -> str:
     brand      = BRANDS.get(brand_key, BRANDS["OTHER"])
     brand_jp   = brand["jp"]
@@ -922,6 +936,16 @@ def build_article_prompt(
                 lines.append(f"  ↳ 章「{p['past']}」と類似 → 同じ切り口・具体例・導入を避ける")
         avoid_block = "━━━━━ 内容が被ってはいけない既存記事 ━━━━━\n" + "\n".join(lines) + "\n"
 
+    direction_block = ""
+    if direction:
+        direction_block = f"""━━━━━ 今回ユーザーが寄せたい方向性 ━━━━━
+{direction}
+
+この方向性を本文の切り口・導入・見出しの優先順位に反映する。
+ただし未検証事実、価格断定、FK番号、個別商品URLは使わない。
+
+"""
+
     purchase_block = f"""━━━━━ 購買意欲を高める方針 ━━━━━
 - 読者が「{brand_jp} を実際に探してみたい・手に入れたい」と感じる読後感を目指す。
 - 資産価値・状態の見極め・長く使う満足感など、所有/購入の魅力を具体的に描く。
@@ -942,7 +966,7 @@ def build_article_prompt(
 キーワード: {keywords}
 生成日: {datetime.date.today().strftime("%Y.%m.%d")}
 
-{purchase_block}{inventory_block}{avoid_block}
+{purchase_block}{inventory_block}{direction_block}{avoid_block}
 ━━━━━ データソース情報 ━━━━━
 {caliber_summary}
 {correction_summary}
@@ -991,7 +1015,8 @@ def build_article_prompt(
 # ─── 生成オーケストレーション ─────────────────────────────────────────────────
 
 def generate_article(brand_key: str, tone: str = "auto", fk_id: str = "",
-                     on_stage=None, on_chunk=None, allow_no_inventory: bool = False) -> dict:
+                     on_stage=None, on_chunk=None, allow_no_inventory: bool = False,
+                     direction: str = "") -> dict:
     """3 ステージ生成フロー + 後処理 n-gram チェック。
 
     在庫連携:
@@ -1038,7 +1063,8 @@ def generate_article(brand_key: str, tone: str = "auto", fk_id: str = "",
                 raise InventoryMissingError(brand_key)
 
     stage("被らないテーマ・構成を考えています…", "prompt_build")
-    structure  = propose_structure(brand_key, tone, item=item)
+    direction = (direction or "").strip()[:500]
+    structure  = propose_structure(brand_key, tone, item=item, direction=direction)
     effective_tone = structure.get("tone") or (tone if tone and tone != "auto" else "guide")
     overlap    = {"ok": True, "flagged": []}
 
@@ -1051,14 +1077,17 @@ def generate_article(brand_key: str, tone: str = "auto", fk_id: str = "",
             stage("構成を調整しています…")
             log.info("structure_revise brand=%s attempt=%s flagged=%s",
                      brand_key, attempt + 1, len(overlap.get("flagged", [])))
-            structure = revise_structure(brand_key, effective_tone, structure, overlap["flagged"])
+            structure = revise_structure(brand_key, effective_tone, structure, overlap["flagged"], direction=direction)
 
     title    = structure.get("title")    or f"{BRANDS[brand_key]['jp']} 特集記事"
     h2s      = structure.get("h2s",      [])
     theme    = structure.get("theme",    "")
     keywords = structure.get("keywords", "")
 
-    prompt  = build_article_prompt(brand_key, effective_tone, title, theme, keywords, overlap.get("flagged", []), item=item)
+    prompt  = build_article_prompt(
+        brand_key, effective_tone, title, theme, keywords, overlap.get("flagged", []),
+        item=item, direction=direction,
+    )
     stage("本文を執筆しています…", "bedrock_call")
     if on_chunk:
         article = invoke_claude_stream(prompt, on_chunk)
@@ -1094,6 +1123,7 @@ def generate_article(brand_key: str, tone: str = "auto", fk_id: str = "",
         "h2s":          h2s,
         "keywords":     keywords,
         "theme":        theme,
+        "direction":    direction,
         "article":      article,
         "html":         markdown_to_wp_html(article),
         "slug":         slug,
@@ -1259,6 +1289,7 @@ def generate():
     brand_key   = data.get("brand", "ROLEX")
     tone        = data.get("tone",  "auto")
     fk_id       = data.get("fk_id", "")
+    direction   = str(data.get("direction", "") or "").strip()[:500]
     allow_no_inv = bool(data.get("allow_no_inventory", False))
     mode        = "inventory" if fk_id else "brand"
 
@@ -1272,9 +1303,10 @@ def generate():
             "stage":      "生成を開始しています…",
             "partial":    "",
         }
-    log.info("job_created job_id=%s brand=%s mode=%s", job_id, brand_key, mode)
+    log.info("job_created job_id=%s brand=%s mode=%s direction_set=%s",
+             job_id, brand_key, mode, bool(direction))
 
-    def _run(jid: str, bk: str, t: str, fk: str) -> None:
+    def _run(jid: str, bk: str, t: str, fk: str, dir_text: str) -> None:
         def on_stage(msg: str, stage_id: str = "") -> None:
             with _JOB_LOCK:
                 if jid in JOBS:
@@ -1291,7 +1323,7 @@ def generate():
         try:
             result = generate_article(
                 bk, t, fk_id=fk, on_stage=on_stage, on_chunk=on_chunk,
-                allow_no_inventory=allow_no_inv,
+                allow_no_inventory=allow_no_inv, direction=dir_text,
             )
             with _JOB_LOCK:
                 JOBS[jid]["status"] = "done"
@@ -1310,7 +1342,7 @@ def generate():
                 JOBS[jid]["error"]  = str(e)
             log.warning("job_error job_id=%s err=%s", jid, e)
 
-    threading.Thread(target=_run, args=(job_id, brand_key, tone, fk_id), daemon=True).start()
+    threading.Thread(target=_run, args=(job_id, brand_key, tone, fk_id, direction), daemon=True).start()
     _cleanup_jobs()
     return jsonify({"ok": True, "job_id": job_id})
 

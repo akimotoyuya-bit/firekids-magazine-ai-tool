@@ -186,12 +186,14 @@ body {
 @media (max-width: 560px) { .grid2 { grid-template-columns: 1fr; } }
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field label { font-size: 11.5px; font-weight: 600; color: var(--text-sub); letter-spacing: 0.02em; }
-select, .inv-search {
+select, .inv-search, textarea.direction-input {
   width: 100%; padding: 9px 12px;
   border: 1px solid var(--border); border-radius: var(--r);
   font-size: 13.5px; font-family: inherit; color: var(--text);
   background: #fff; outline: none;
   transition: border-color 0.12s, box-shadow 0.12s;
+}
+select, .inv-search {
   appearance: none; -webkit-appearance: none;
 }
 select {
@@ -199,10 +201,15 @@ select {
   background-repeat: no-repeat; background-position: right 12px center;
   padding-right: 32px; cursor: pointer;
 }
-select:focus, .inv-search:focus {
+select:focus, .inv-search:focus, textarea.direction-input:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(192,40,45,0.14);
 }
+textarea.direction-input {
+  min-height: 92px; resize: vertical; line-height: 1.7;
+  margin-top: 12px;
+}
+.field-help { font-size: 11.5px; color: var(--text-muted); line-height: 1.6; }
 
 .auto-note {
   display: flex; gap: 10px; align-items: flex-start;
@@ -527,6 +534,7 @@ select:focus, .inv-search:focus {
 .live-actions {
   flex-shrink: 0; padding: 14px; display: flex; gap: 12px;
   justify-content: center; background: rgba(26,26,26,0.95);
+  flex-wrap: wrap;
 }
 .live-btn-primary {
   padding: 12px 30px; background: linear-gradient(120deg,#e67e22,#c4621a);
@@ -541,6 +549,20 @@ select:focus, .inv-search:focus {
 }
 .live-btn-ghost:hover { background: rgba(255,255,255,0.18); }
 .live-btn-primary { min-height: 44px; }
+.live-next-panel {
+  flex-basis: 100%; max-width: 760px; width: 100%;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+  padding: 0 0 2px;
+}
+.live-next-card {
+  border: 1px solid rgba(255,255,255,0.14); border-radius: 12px;
+  background: rgba(255,255,255,0.07); padding: 12px 14px; color: #fff;
+}
+.live-next-label { font-size: 11px; color: rgba(255,255,255,0.6); margin-bottom: 4px; }
+.live-next-title { font-size: 13px; font-weight: 800; margin-bottom: 8px; }
+.live-next-card .live-btn-ghost,
+.live-next-card .live-btn-primary { width: 100%; justify-content: center; }
+@media (max-width: 640px) { .live-next-panel { grid-template-columns: 1fr; } }
 
 /* エラー / 在庫未検出パネル */
 .live-error {
@@ -611,7 +633,6 @@ select:focus, .inv-search:focus {
     <div class="nav-section">
       <div class="nav-label">ツール</div>
       <a class="nav-item" href="#"><span class="nav-icon">◷</span>スケジュール</a>
-      <a class="nav-item" href="#"><span class="nav-icon">⊞</span>プロンプト</a>
       <a class="nav-item" href="../upload/"><span class="nav-icon">⇪</span>WP 投稿</a>
     </div>
     <div class="sidebar-gap"></div>
@@ -645,6 +666,12 @@ select:focus, .inv-search:focus {
             <option value="{{ key }}">{{ val.jp }}（{{ key }}）</option>
             {% endfor %}
           </select>
+        </div>
+        <div class="field" style="margin-top:14px;">
+          <label>方向性メモ（任意）</label>
+          <textarea class="direction-input" id="direction"
+            placeholder="例: 初心者にもわかる選び方に寄せたい / ビジネスで使いやすい観点を強めたい / 歴史背景より所有感を中心にしたい"></textarea>
+          <div class="field-help">未入力でも生成できます。特に寄せたい切り口がある時だけ入力してください。</div>
         </div>
         <div class="auto-note">
           <span class="auto-note-icon">●</span>
@@ -776,8 +803,22 @@ select:focus, .inv-search:focus {
   </div>
 
   <div class="live-actions" id="live-actions" style="display:none;">
-    <button class="live-btn-primary" id="go-review">推敲・編集する →</button>
+    <div class="live-next-panel">
+      <div class="live-next-card">
+        <div class="live-next-label">STEP 2</div>
+        <div class="live-next-title">画像生成 / インポート</div>
+        <button class="live-btn-primary" id="go-image">画像生成へ進む</button>
+      </div>
+      <div class="live-next-card">
+        <div class="live-next-label">STEP 3</div>
+        <div class="live-next-title">画像を取り込む</div>
+        <button class="live-btn-ghost" id="import-image">画像をインポート</button>
+      </div>
+    </div>
+    <button class="live-btn-primary" id="go-preview">プレビューを確認</button>
+    <button class="live-btn-ghost" id="go-post">投稿準備へ</button>
     <button class="live-btn-ghost" onclick="closeLive()">閉じる</button>
+    <input type="file" id="image-import-file" accept="image/*" style="display:none;">
   </div>
 </div>
 
@@ -948,6 +989,10 @@ marked.setOptions({ breaks: true, gfm: true });
 let liveTimer    = null;
 let liveStart    = 0;
 let userScrolled = false;
+let liveTargetText = '';
+let liveVisibleText = '';
+let liveTypingTimer = null;
+let liveIsFinished = false;
 
 const wpScroll = document.getElementById('wp-scroll');
 wpScroll.addEventListener('scroll', () => {
@@ -957,6 +1002,7 @@ wpScroll.addEventListener('scroll', () => {
 
 function openLive(catLabel) {
   userScrolled = false;
+  resetLiveTyping();
   document.getElementById('live-stage').textContent   = '生成を開始しています…';
   document.getElementById('live-elapsed').textContent = '';
   document.getElementById('live-close').style.display   = 'none';
@@ -982,6 +1028,7 @@ function openLive(catLabel) {
 
 function closeLive() {
   clearInterval(liveTimer);
+  resetLiveTyping();
   document.getElementById('live-overlay').classList.remove('show');
   document.getElementById('gen-btn').disabled = false;
 }
@@ -1068,8 +1115,16 @@ function splitArticle(md) {
   return { title, body };
 }
 
-function renderLive(partial, finished) {
-  const { title, body } = splitArticle(partial || '');
+function resetLiveTyping() {
+  liveTargetText = '';
+  liveVisibleText = '';
+  liveIsFinished = false;
+  if (liveTypingTimer) clearTimeout(liveTypingTimer);
+  liveTypingTimer = null;
+}
+
+function renderLiveNow(md, finished) {
+  const { title, body } = splitArticle(md || '');
   if (title) {
     document.getElementById('wp-title').textContent       = title;
     document.getElementById('wp-crumb-title').textContent = title;
@@ -1080,6 +1135,29 @@ function renderLive(partial, finished) {
   if (!userScrolled) wpScroll.scrollTop = wpScroll.scrollHeight;
 }
 
+function pumpLiveTyping() {
+  if (liveVisibleText.length < liveTargetText.length) {
+    const gap = liveTargetText.length - liveVisibleText.length;
+    const step = Math.min(Math.max(Math.ceil(gap / 18), 4), 28);
+    liveVisibleText = liveTargetText.slice(0, liveVisibleText.length + step);
+    renderLiveNow(liveVisibleText, liveIsFinished && liveVisibleText.length >= liveTargetText.length);
+    liveTypingTimer = setTimeout(pumpLiveTyping, 28);
+    return;
+  }
+  renderLiveNow(liveVisibleText, liveIsFinished);
+  liveTypingTimer = null;
+}
+
+function renderLive(partial, finished) {
+  const nextText = partial || '';
+  if (nextText.length < liveVisibleText.length) {
+    liveVisibleText = '';
+  }
+  liveTargetText = nextText;
+  liveIsFinished = !!finished;
+  if (!liveTypingTimer) pumpLiveTyping();
+}
+
 /* ── 生成（非同期ポーリング + ストリーミング表示）──────── */
 // POST /generate → job_id → /generate-status/<job_id> を約1秒ごとにポーリングし
 // 生成途中の本文（partial）をリアルタイムでWP記事風プレビューに反映する。
@@ -1087,6 +1165,7 @@ async function generate(opts) {
   opts = opts || {};
   const btn = document.getElementById('gen-btn');
   let payload, catLabel = '時計の基礎知識';
+  const direction = (document.getElementById('direction')?.value || '').trim();
 
   if (opts.retry && lastPayload) {
     payload = Object.assign({}, lastPayload);
@@ -1098,6 +1177,7 @@ async function generate(opts) {
     // 主動線: ブランドのみ。在庫はサーバー側で自動選定。
     payload = { brand: document.getElementById('brand').value, tone: 'auto' };
   }
+  if (direction) payload.direction = direction;
   if (opts.allowNoInventory) payload.allow_no_inventory = true;
   lastPayload = payload;
 
@@ -1139,7 +1219,14 @@ async function generate(opts) {
         document.getElementById('live-stage').textContent   = '✓ 完成しました';
         document.getElementById('live-close').style.display   = '';
         document.getElementById('live-actions').style.display = '';
-        document.getElementById('go-review').onclick = () => { window.location.href = 'review'; };
+        document.getElementById('go-image').onclick = () => flashHint('画像生成CTAです。次の実装で画像生成ツールに接続します。');
+        document.getElementById('import-image').onclick = () => document.getElementById('image-import-file').click();
+        document.getElementById('image-import-file').onchange = (ev) => {
+          const file = ev.target.files && ev.target.files[0];
+          if (file) flashHint('画像を選択しました: ' + file.name);
+        };
+        document.getElementById('go-preview').onclick = () => { window.location.href = 'review'; };
+        document.getElementById('go-post').onclick = () => { window.location.href = '../upload/'; };
         return;
       }
       if (poll.status === 'inventory_missing') {
