@@ -1352,10 +1352,11 @@ def generate_status(job_id: str):
     """ジョブの完了状態を返す。ポーリング用エンドポイント。
 
     status:
-      running  — 生成中（3 秒後に再ポーリング）
-      done     — 完了（result フィールドに記事データ）
-      error    — 失敗（error フィールドにエラーメッセージ）
-      not_found — job_id が存在しない（再生成を促す）
+      running          — 生成中（再ポーリング）
+      done             — 完了（result フィールドに記事データ）
+      error            — 失敗（error フィールドにエラーメッセージ）
+      inventory_missing — 在庫なし（error フィールドにメッセージ）
+      not_found        — job_id が存在しない（再生成を促す）
     """
     with _JOB_LOCK:
         job = JOBS.get(job_id)
@@ -1374,6 +1375,9 @@ def generate_status(job_id: str):
 
     if job["status"] == "error":
         return jsonify({"status": "error", "error": job.get("error", "不明なエラー")})
+
+    if job["status"] == "inventory_missing":
+        return jsonify({"status": "inventory_missing", "error": job.get("error", "在庫が見つかりませんでした")})
 
     # まだ running — 進行状況と生成途中の本文を返す
     elapsed = int(time.time() - job.get("created_at", time.time()))

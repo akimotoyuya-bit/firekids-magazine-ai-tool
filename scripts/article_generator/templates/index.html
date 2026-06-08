@@ -1138,7 +1138,8 @@ function renderLiveNow(md, finished) {
 function pumpLiveTyping() {
   if (liveVisibleText.length < liveTargetText.length) {
     const gap = liveTargetText.length - liveVisibleText.length;
-    const step = Math.min(Math.max(Math.ceil(gap / 18), 4), 28);
+    const CHARS_PER_TICK = 8;
+    const step = Math.min(CHARS_PER_TICK, gap);
     liveVisibleText = liveTargetText.slice(0, liveVisibleText.length + step);
     renderLiveNow(liveVisibleText, liveIsFinished && liveVisibleText.length >= liveTargetText.length);
     liveTypingTimer = setTimeout(pumpLiveTyping, 28);
@@ -1200,7 +1201,7 @@ async function generate(opts) {
     const jobId = startData.job_id;
     const MAX_POLLS = 600; // 1s × 600 = 10 分
     for (let i = 0; i < MAX_POLLS; i++) {
-      await new Promise(r => setTimeout(r, 1000));
+      await new Promise(r => setTimeout(r, 300));
       let poll;
       try {
         poll = await fetch('generate-status/' + jobId).then(r => r.json());
