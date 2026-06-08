@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deploy FIRE KIDS Magazine Tool to AWS App Runner."""
+"""Deploy FIRE KIDS Magazine Tool to AWS App Runner + Vercel."""
 import json
 import os
 import subprocess
@@ -190,8 +190,44 @@ def main():
     sys.exit(1)
 
 
+def deploy_vercel() -> None:
+    """Vercel deploy using token from deploy/.vercel_token (bypasses CLI login)."""
+    token_file = ROOT / "deploy" / ".vercel_token"
+    if not token_file.exists():
+        print("SKIP Vercel: deploy/.vercel_token not found.")
+        return
+    token = token_file.read_text(encoding="utf-8").strip()
+    if not token or token == "PASTE_YOUR_VERCEL_TOKEN_HERE":
+        print("SKIP Vercel: token not set in deploy/.vercel_token")
+        return
+
+    print("\n=== Vercel Deploy ===")
+    env = os.environ.copy()
+    env["VERCEL_TOKEN"] = token
+    # ASCII-only VERCEL_ORG_ID / VERCEL_PROJECT_ID are read from .vercel/project.json if present
+    npx_cmd = "npx.cmd" if sys.platform == "win32" else "npx"
+    result = subprocess.run(
+        [npx_cmd, "vercel", "--prod", "--yes", "--token", token, "--scope", "takashi-gotos-projects"],
+        cwd=str(ROOT),
+        env=env,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+    )
+    if result.stdout:
+        print(result.stdout.strip())
+    if result.stderr:
+        print(result.stderr.strip())
+    if result.returncode == 0:
+        print("Vercel deploy SUCCESS")
+    else:
+        print(f"Vercel deploy FAILED (exit {result.returncode})")
+
+
 if __name__ == "__main__":
     try:
         main()
+        deploy_vercel()
     finally:
         cleanup_temp_files()
