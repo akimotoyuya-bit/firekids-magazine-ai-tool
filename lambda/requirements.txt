@@ -1,0 +1,4 @@
+# Lambda 用依存パッケージ
+# boto3 は Lambda ランタイムに同梱されているが、バージョン固定したい場合は明記する
+boto3
+requests

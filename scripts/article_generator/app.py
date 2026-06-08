@@ -57,7 +57,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from vector_store import ArticleVectorStore, get_store
 from inventory import (
-    find_by_fk, format_for_prompt, get_in_stock,
+    find_by_fk, format_for_prompt, get_image_for_item, get_in_stock,
     inventory_summary, reload_from_bytes,
     select_feature_item, summarize_item,
 )
@@ -914,6 +914,7 @@ def build_article_prompt(
     )
 
     inventory_block = ""
+    image_placeholder = ""
     if item:
         inventory_block = f"""━━━━━ 在庫連携：特集対象商品 ━━━━━
 {format_for_prompt(item)}
@@ -926,6 +927,15 @@ def build_article_prompt(
 - CTA には必ず {cta_base} を使用すること
 
 """
+        # 画像プレースホルダー（LLM に URL を渡さず後処理で置換する）
+        img = get_image_for_item(item)
+        if img:
+            image_placeholder = f"__IMAGE_PLACEHOLDER_{item['fk_id']}__"
+            inventory_block += (
+                f"━━━━━ 商品画像 ━━━━━\n"
+                f"記事内の商品紹介セクションの直後に、以下の文字列を**そのまま**出力してください（改変・省略禁止）:\n"
+                f"{image_placeholder}\n\n"
+            )
 
     avoid_block = ""
     if avoid_articles:
@@ -955,7 +965,7 @@ def build_article_prompt(
 
 """
 
-    return f"""あなたは FIRE KIDS Magazine の記事ライターです。
+    prompt = f"""あなたは FIRE KIDS Magazine の記事ライターです。
 以下の条件に従い、ヴィンテージ時計の SEO 記事（Markdown 形式）を1本生成してください。
 
 ━━━━━ 記事情報 ━━━━━
@@ -1010,6 +1020,8 @@ def build_article_prompt(
 - 「結論から〜」は記事全体で最大1箇所
 
 記事本文を Markdown 形式で生成してください（タイトル行から開始）。"""
+
+    return prompt, image_placeholder
 
 
 # ─── 生成オーケストレーション ─────────────────────────────────────────────────
@@ -1084,7 +1096,7 @@ def generate_article(brand_key: str, tone: str = "auto", fk_id: str = "",
     theme    = structure.get("theme",    "")
     keywords = structure.get("keywords", "")
 
-    prompt  = build_article_prompt(
+    prompt, image_placeholder = build_article_prompt(
         brand_key, effective_tone, title, theme, keywords, overlap.get("flagged", []),
         item=item, direction=direction,
     )
@@ -1093,6 +1105,18 @@ def generate_article(brand_key: str, tone: str = "auto", fk_id: str = "",
         article = invoke_claude_stream(prompt, on_chunk)
     else:
         article = invoke_claude(prompt)
+
+    # 画像プレースホルダーを実際の WordPress 画像ブロックに置換
+    if image_placeholder and item:
+        img = get_image_for_item(item)
+        if img:
+            wp_image_block = (
+                '\n<!-- wp:image {"sizeSlug":"large"} -->\n'
+                '<figure class="wp-block-image size-large">'
+                f'<img src="{img["source_url"]}" alt="{img["alt"]}" /></figure>\n'
+                '<!-- /wp:image -->\n'
+            )
+            article = article.replace(image_placeholder, wp_image_block)
 
     stage("仕上げチェック中…")
     slug         = title_to_slug(title)

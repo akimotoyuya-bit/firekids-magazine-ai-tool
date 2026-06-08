@@ -361,3 +361,66 @@ def inventory_summary() -> dict:
         "brands":  brands,
         "loaded":  len(items) > 0,
     }
+
+
+# ─── 画像メタ参照 ────────────────────────────────────────────────────────
+_image_index_cache: dict | None = None
+
+
+def _load_image_index() -> dict:
+    """fk_image_index.json をキャッシュ付きで読み込む。"""
+    global _image_index_cache
+    if _image_index_cache is not None:
+        return _image_index_cache
+    try:
+        from image_store import load_index  # type: ignore
+        _image_index_cache = load_index()
+    except ImportError:
+        try:
+            from scripts.article_generator.image_store import load_index
+            _image_index_cache = load_index()
+        except Exception:
+            _image_index_cache = {}
+    except Exception:
+        _image_index_cache = {}
+    return _image_index_cache
+
+
+def get_image_for_item(item: dict) -> dict | None:
+    """item['fk_id'] に対応する画像メタを返す。無ければ None。
+
+    返す dict:
+      {
+        "s3_key":     "images/SEIKO/FK014781/main.jpg",
+        "source_url": "https://cdn.firekids.jp/products/14781/...",
+        "alt":        "セイコー / キングセイコー / 1960年代",
+      }
+
+    alt には FK 番号・価格を含めない（summarize_item() を流用）。
+    インデックスが無い / 読めない / in_stock=false の場合は None を返し
+    記事生成は画像なしで続行する（degrade 動作）。
+    """
+    fk_id = item.get("fk_id", "")
+    if not fk_id:
+        return None
+
+    index = _load_image_index()
+    meta = index.get(fk_id)
+    if not meta:
+        return None
+
+    if not meta.get("in_stock", True):
+        return None
+
+    s3_key = meta.get("s3_main", "")
+    source_url = meta.get("source_url", "")
+    if not s3_key and not source_url:
+        return None
+
+    alt = summarize_item(item)  # FK 番号・価格を含まない 1 行要約
+
+    return {
+        "s3_key":     s3_key,
+        "source_url": source_url,
+        "alt":        alt,
+    }
