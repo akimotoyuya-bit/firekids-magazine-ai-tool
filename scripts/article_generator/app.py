@@ -1106,17 +1106,15 @@ def generate_article(brand_key: str, tone: str = "auto", fk_id: str = "",
     else:
         article = invoke_claude(prompt)
 
-    # 画像プレースホルダーを実際の WordPress 画像ブロックに置換
+    # 画像メタをリザルトに含める（WordPress 連携は別ステップ）
+    # プレースホルダーは記事本文から除去し、メタ情報として返す
+    image_meta: dict | None = None
     if image_placeholder and item:
         img = get_image_for_item(item)
         if img:
-            wp_image_block = (
-                '\n<!-- wp:image {"sizeSlug":"large"} -->\n'
-                '<figure class="wp-block-image size-large">'
-                f'<img src="{img["source_url"]}" alt="{img["alt"]}" /></figure>\n'
-                '<!-- /wp:image -->\n'
-            )
-            article = article.replace(image_placeholder, wp_image_block)
+            image_meta = img
+        # プレースホルダーを本文から除去（CDN URL 直貼りは避ける）
+        article = article.replace(image_placeholder, "")
 
     stage("仕上げチェック中…")
     slug         = title_to_slug(title)
@@ -1161,6 +1159,7 @@ def generate_article(brand_key: str, tone: str = "auto", fk_id: str = "",
         "tone_reference_summary": tone_reference_summary,
         "fk_id":        fk_id,
         "item":         item,
+        "image_meta":   image_meta,  # WordPress 連携用（s3_key, source_url, alt）
     }
 
 

@@ -44,9 +44,34 @@ SLEEP_MIN = 1.0
 SLEEP_MAX = 1.5
 
 
-# ─── ブランド正規化（inventory.py の normalize_brand を再利用） ────────────
+# ─── ブランド正規化 ───────────────────────────────────────────────────────
+# 日本語ブランド名 → BRANDS キーのマッピング
+_JP_BRAND_MAP: dict[str, str] = {
+    "ロレックス": "ROLEX",
+    "チューダー": "TUDOR",
+    "チュードル": "TUDOR",
+    "オメガ": "OMEGA",
+    "セイコー": "SEIKO",
+    "グランドセイコー": "SEIKO",
+    "キングセイコー": "SEIKO",
+    "シチズン": "CITIZEN",
+    "IWC": "IWC",
+    "オリエント": "ORIENT",
+    "ロンジン": "LONGINES",
+    "カルティエ": "CARTIER",
+    "ユニバーサルジュネーブ": "UNIVERSAL",
+    "ユニバーサル": "UNIVERSAL",
+    "ブライトリング": "BREITLING",
+    "ヴァシュロン": "VC",
+    "パテック": "PATEK",
+    "オーデマピゲ": "AP",
+    "ジャガー": "JLC",
+    "オーデマ": "AP",
+}
+
+
 def _get_normalize_brand():
-    """inventory.py の normalize_brand を遅延 import して返す。"""
+    """inventory.py の normalize_brand を遅延 import して返す（英語キー用）。"""
     try:
         from inventory import normalize_brand  # type: ignore
         return normalize_brand
@@ -55,10 +80,33 @@ def _get_normalize_brand():
             from scripts.article_generator.inventory import normalize_brand
             return normalize_brand
         except ImportError:
-            # フォールバック: 常に OTHER
             def normalize_brand(raw: str) -> str:  # type: ignore
                 return "OTHER"
             return normalize_brand
+
+
+def _brand_from_name(name: str) -> str:
+    """商品名（日本語）先頭からブランドキーを推定する。"""
+    for jp_name, brand_key in _JP_BRAND_MAP.items():
+        if name.startswith(jp_name) or jp_name in name[:15]:
+            return brand_key
+    # 英語ブランド名が先頭に来る場合（IWC 等）
+    normalize_brand = _get_normalize_brand()
+    first_word = name.split()[0] if name.split() else ""
+    result = normalize_brand(first_word)
+    return result
+
+
+def _build_fk_brand_map() -> dict[str, str]:
+    """在庫 CSV から FK 番号 → brand_key の辞書を作る（最も正確）。"""
+    try:
+        try:
+            from inventory import load_inventory  # type: ignore
+        except ImportError:
+            from scripts.article_generator.inventory import load_inventory
+        return {item["fk_id"]: item["brand_key"] for item in load_inventory()}
+    except Exception:
+        return {}
 
 
 # ─── HTTP ────────────────────────────────────────────────────────────────
@@ -85,7 +133,7 @@ def _extract_product_blocks(html: str) -> list[str]:
     return blocks
 
 
-def _parse_block(block: str, normalize_brand) -> dict | None:
+def _parse_block(block: str, fk_brand_map: dict) -> dict | None:
     """1 商品ブロックから必要なフィールドをすべて抽出する。
 
     FK 番号が取れなければ None を返す（FK なし商品はスキップ）。
@@ -108,11 +156,10 @@ def _parse_block(block: str, normalize_brand) -> dict | None:
         main_image_url = img_match.group(1)
         name = img_match.group(4)
 
-    # ブランド推定：商品名の先頭単語から normalize
-    brand_key = "OTHER"
-    if name:
-        first_word = name.split()[0] if name.split() else ""
-        brand_key = normalize_brand(first_word)
+    # ブランド判定: 在庫 CSV の FK → brand_key を第一優先、次に商品名から推定
+    brand_key = fk_brand_map.get(fk_id) or (
+        _brand_from_name(name) if name else "OTHER"
+    )
 
     return {
         "fk_id":          fk_id,
@@ -125,7 +172,11 @@ def _parse_block(block: str, normalize_brand) -> dict | None:
 
 
 def _has_next_page(html: str) -> bool:
-    return 'ec-pager__item--next' in html
+    # firekids.jp は "次へ" テキストリンクでページネーションを示す
+    # 「次へ」または pageno=N+1 へのリンクが存在するかで判定
+    return ('次へ' in html or
+            'ec-pager__item--next' in html or
+            re.search(r'pageno=\d+.*?次', html, re.DOTALL) is not None)
 
 
 # ─── メイン処理 ──────────────────────────────────────────────────────────
@@ -138,7 +189,20 @@ def crawl_all(max_pages: int = 200) -> list[dict]:
     Returns:
         list[dict] — FK が取れた商品のみ。重複 FK は後勝ち。
     """
-    normalize_brand = _get_normalize_brand()
+    # .env を読み込んで在庫 CSV が S3 から取得できるようにする
+    try:
+        from dotenv import load_dotenv as _lde
+        import os as _os
+        _env = _os.path.join(_os.path.dirname(__file__), ".env")
+        if _os.path.exists(_env):
+            _lde(_env)
+    except Exception:
+        pass
+
+    # 在庫 CSV から FK→brand マップを事前構築（最も正確なブランド判定）
+    fk_brand_map = _build_fk_brand_map()
+    log.info("fk_brand_map loaded entries=%d", len(fk_brand_map))
+
     records: dict[str, dict] = {}  # fk_id → record（重複排除）
     page = 1
     consecutive_empty = 0
@@ -159,7 +223,7 @@ def crawl_all(max_pages: int = 200) -> list[dict]:
         page_count = 0
 
         for block in blocks:
-            rec = _parse_block(block, normalize_brand)
+            rec = _parse_block(block, fk_brand_map)
             if rec:
                 records[rec["fk_id"]] = rec
                 page_count += 1
