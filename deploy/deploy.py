@@ -202,6 +202,13 @@ def deploy_vercel() -> None:
         return
 
     print("\n=== Vercel Deploy ===")
+    # Windows コンソール (cp932) でも Vercel 出力の非ASCII文字（– 等）で
+    # print が落ちないよう、stdout/stderr を utf-8 + replace で再構成する。
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     env = os.environ.copy()
     env["VERCEL_TOKEN"] = token
     # ASCII-only VERCEL_ORG_ID / VERCEL_PROJECT_ID are read from .vercel/project.json if present
@@ -216,9 +223,9 @@ def deploy_vercel() -> None:
         capture_output=True,
     )
     if result.stdout:
-        print(result.stdout.encode("utf-8", errors="replace").decode("utf-8", errors="replace").strip())
+        print(result.stdout.strip())
     if result.stderr:
-        print(result.stderr.encode("utf-8", errors="replace").decode("utf-8", errors="replace").strip())
+        print(result.stderr.strip())
     if result.returncode == 0:
         print("Vercel deploy SUCCESS")
     else:
