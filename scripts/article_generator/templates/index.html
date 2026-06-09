@@ -261,6 +261,13 @@ body {
   border-color: var(--border-focus);
   box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
 }
+.form-label-opt {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
 .cat-selector {
   display: flex; gap: 8px; flex-wrap: wrap;
 }
@@ -528,6 +535,9 @@ textarea.direction-input {
   border: 1px solid var(--border); border-radius: 10px;
   overflow: hidden; max-height: 228px; overflow-y: auto;
   background: #fff; margin-bottom: 10px;
+}
+.inv-list--compact {
+  max-height: 180px;
 }
 .inv-list::-webkit-scrollbar { width: 4px; }
 .inv-list::-webkit-scrollbar-thumb { background: #d4d4d4; border-radius: 2px; }
@@ -1200,7 +1210,7 @@ textarea.direction-input {
         <div class="gen-card">
           <div class="gen-card-header">
             <h2 class="gen-card-title">記事を生成する</h2>
-            <p class="gen-card-sub">ブランドを選ぶだけ。AI が在庫から主役を自動選定し、過去記事と被らない本文を執筆します。</p>
+            <p class="gen-card-sub">ブランドとモデルを選択。AI が過去記事と被らない本文を執筆します。</p>
           </div>
 
           <!-- 状態バッジ -->
@@ -1211,75 +1221,65 @@ textarea.direction-input {
             </div>
           </div>
 
-          <!-- ブランド指定（主動線）-->
+          <!-- ─── 統合フォーム ─────────────────────── -->
           <div id="panel-brand">
+
+            <!-- ① ブランド -->
             <div class="form-group">
               <label class="form-label">ブランド</label>
-              <select id="brand" class="form-select">
+              <select id="brand" class="form-select" onchange="syncBrandFilter()">
                 {% for key, val in brands.items() %}
                 <option value="{{ key }}">{{ val.jp }}（{{ key }}）</option>
                 {% endfor %}
               </select>
             </div>
+
+            <!-- ② モデル選択（在庫リスト）-->
             <div class="form-group">
-              <label class="form-label">記事カテゴリ（任意）</label>
+              <label class="form-label">モデル <span class="form-label-opt">（未選択で AI が自動選定）</span></label>
+              <div class="inv-count" id="inv-count-msg">在庫データを読み込み中…</div>
+              <input class="inv-search" id="inv-search" type="text"
+                     placeholder="モデル名・Ref・FK番号で検索…" oninput="filterInventory()" style="margin-bottom:6px;">
+              <div class="inv-list inv-list--compact" id="inv-list">
+                <div class="inv-empty">在庫データを読み込み中…</div>
+              </div>
+              <div class="inv-sel-card" id="inv-selected">
+                <div class="inv-sel-label">選択中のモデル</div>
+                <div class="inv-sel-name" id="inv-sel-name"></div>
+                <div class="inv-sel-spec" id="inv-sel-spec"></div>
+              </div>
+              <span id="sel-item-note" style="font-size:12px;color:var(--text-sub);"></span>
+            </div>
+
+            <!-- ③ 記事カテゴリ -->
+            <div class="form-group">
+              <label class="form-label">記事カテゴリ</label>
               <div class="cat-selector" id="cat-selector">
                 {% for key, val in article_categories.items() %}
                 <button type="button" class="cat-btn{% if key == 'basic' %} active{% endif %}" data-cat="{{ key }}">{{ val.jp }}</button>
                 {% endfor %}
               </div>
-              <div class="field-help">デフォルトは「時計の基礎知識」。記事の口調・参照する過去記事が変わります。</div>
+              <div class="field-help">記事の口調・参照する過去記事が変わります。</div>
             </div>
-            <div class="field" style="margin-bottom:16px;">
-              <label class="form-label">方向性メモ（任意）</label>
+
+            <!-- ④ 方向性メモ -->
+            <div class="form-group">
+              <label class="form-label">方向性メモ <span class="form-label-opt">（任意）</span></label>
               <textarea class="direction-input" id="direction"
                 placeholder="例: 初心者にもわかる選び方に寄せたい / ビジネスで使いやすい観点を強めたい / 歴史背景より所有感を中心にしたい"></textarea>
-              <div class="field-help">未入力でも生成できます。特に寄せたい切り口がある時だけ入力してください。</div>
-            </div>
-            <div class="auto-note">
-              <span class="auto-note-icon">●</span>
-              <div>
-                <b>ブランドを選ぶだけ。</b>
-                記事の主役となる在庫時計・タイトル・テーマは AI が自動で決定します。
-                過去記事と<b>口調は揃え、内容は被らない</b>記事を執筆します。
-                <span id="sel-item-note"></span>
-              </div>
+              <div class="field-help">特に寄せたい切り口がある時だけ入力してください。</div>
             </div>
           </div>
 
-          <!-- CTA（主動線）-->
-          <button class="btn-primary btn-full" id="gen-btn" style="margin-top:16px;" onclick="generate()">
+          <!-- CTA -->
+          <button class="btn-primary btn-full" id="gen-btn" style="margin-top:8px;" onclick="generate()">
             記事を作成する →
           </button>
 
-          <!-- ─── 詳細設定（折りたたみ）─────────────────────── -->
-          <details class="advanced" id="advanced">
-            <summary>詳細設定（在庫から主役を選ぶ / CSV更新 / スキャン）</summary>
+          <!-- ─── 管理ツール（折りたたみ）─────────────────────── -->
+          <details class="advanced" id="advanced" style="margin-top:16px;">
+            <summary>管理ツール（在庫 CSV 更新 / 過去記事スキャン）</summary>
             <div class="advanced-body">
-
-              <div class="advanced-sub">在庫から主役を選ぶ（任意）</div>
-              <div class="inv-count" id="inv-count-msg">在庫データを読み込み中…</div>
-              <div class="inv-toolbar">
-                <select id="inv-brand-filter" onchange="filterInventory()">
-                  <option value="">全ブランド</option>
-                  {% for key, val in brands.items() %}
-                  <option value="{{ key }}">{{ val.jp }}</option>
-                  {% endfor %}
-                </select>
-                <input class="inv-search" id="inv-search" type="text"
-                       placeholder="モデル名・Ref・FK番号で検索…" oninput="filterInventory()">
-              </div>
-
-              <div class="inv-list" id="inv-list">
-                <div class="inv-empty">在庫データを読み込み中…</div>
-              </div>
-
-              <div class="inv-sel-card" id="inv-selected">
-                <div class="inv-sel-label">選択中の主役商品</div>
-                <div class="inv-sel-name"  id="inv-sel-name"></div>
-                <div class="inv-sel-spec"  id="inv-sel-spec"></div>
-              </div>
-
               <div class="advanced-sub">在庫データ</div>
               <label class="inv-upload" for="inv-file">
                 <span>↑</span>在庫 CSV を更新する（仕入れデータ.csv）
@@ -1473,10 +1473,10 @@ const MSGS = [
 let allInventory  = [];
 let selectedFkId  = '';
 
-/* ── 詳細設定（在庫リストは初回展開時に読み込む）─────── */
-document.getElementById('advanced').addEventListener('toggle', function() {
-  if (this.open && allInventory.length === 0) loadInventory();
-});
+/* ── 在庫リストはページ読み込み時に自動取得 ─────── */
+loadInventory();
+/* 管理ツールはCSV更新・スキャン用 */
+document.getElementById('advanced').addEventListener('toggle', function() {});
 
 /* ── 状態バッジ + 被り防止ステータス ──────────────────── */
 function setBadge(kind, text) {
@@ -1551,16 +1551,20 @@ async function loadInventory() {
     const s  = d.summary || {};
     msg.textContent = allInventory.length
       ? `在庫 ${s.total || allInventory.length} 件（HP掲載中 ${s.listed || 0} 件）`
-      : '在庫データがありません。下の CSV アップロードから追加してください。';
-    renderList(allInventory);
+      : '在庫データがありません。管理ツールの CSV アップロードから追加してください。';
+    filterInventory();
   } catch(e) {
     msg.textContent = '在庫データの読み込みに失敗しました';
     renderList([]);
   }
 }
 
+function syncBrandFilter() {
+  // ブランドセレクトと在庫フィルタを連動
+  filterInventory();
+}
 function filterInventory() {
-  const brand = document.getElementById('inv-brand-filter').value;
+  const brand = document.getElementById('brand').value;
   const q     = document.getElementById('inv-search').value.toLowerCase();
   renderList(allInventory.filter(i => {
     return (!brand || i.brand_key === brand)
