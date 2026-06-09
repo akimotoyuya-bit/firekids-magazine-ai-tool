@@ -377,22 +377,26 @@ _image_index_cache: dict | None = None
 
 
 def _load_image_index() -> dict:
-    """fk_image_index.json をキャッシュ付きで読み込む。"""
+    """fk_image_index.json をキャッシュ付きで読み込む。空だった場合はリトライする。"""
     global _image_index_cache
-    if _image_index_cache is not None:
+    # キャッシュが存在し、かつ中身がある場合のみキャッシュを返す
+    if _image_index_cache:
         return _image_index_cache
     try:
         from image_store import load_index  # type: ignore
-        _image_index_cache = load_index()
+        result = load_index()
     except ImportError:
         try:
             from scripts.article_generator.image_store import load_index
-            _image_index_cache = load_index()
+            result = load_index()
         except Exception:
-            _image_index_cache = {}
+            result = {}
     except Exception:
-        _image_index_cache = {}
-    return _image_index_cache
+        result = {}
+    # 中身があるときだけキャッシュする（空なら次回リトライ）
+    if result:
+        _image_index_cache = result
+    return result
 
 
 def get_image_for_item(item: dict) -> dict | None:

@@ -502,6 +502,16 @@ def ping():
     return jsonify({'pong': True, 'user': os.getenv('WP_USER', ''), 'pw_len': len(os.getenv('WP_APP_PASSWORD', '').replace(' ', ''))})
 
 
+@app.route('/wp-config')
+def wp_config():
+    """認証済みクライアントに WP 接続情報を返す（ブラウザ直接投稿用）。"""
+    return jsonify({
+        'base_url': WP_BASE_URL,
+        'user': WP_USER,
+        'app_password': WP_APP_PASSWORD,
+    })
+
+
 @app.route('/health')
 def health():
     user = os.getenv('WP_USER', '')

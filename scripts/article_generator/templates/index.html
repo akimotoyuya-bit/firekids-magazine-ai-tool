@@ -1895,7 +1895,92 @@ function insertImageFromFile(file) {
 
 /* ── インライン投稿（今すぐ/予約/下書き）─────────────── */
 let currentResult = {};
-const PUBLISH_URL = window.location.origin + '/upload/publish';
+// AppRunner→WordPressがAWS IPブロックで届かないため、ブラウザから直接WP REST APIを叩く
+const WP_CONFIG_URL = window.location.origin + '/upload/wp-config';
+
+/** WP Basic Auth ヘッダー文字列を返す */
+function _wpAuth(user, pass) {
+  return 'Basic ' + btoa(unescape(encodeURIComponent(user + ':' + pass)));
+}
+
+/** WP REST API 汎用呼び出し */
+async function _wpCall(base, user, pass, method, path, body) {
+  const opts = {
+    method,
+    headers: { 'Authorization': _wpAuth(user, pass) },
+  };
+  if (body !== undefined) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  const resp = await fetch(base.replace(/\/$/, '') + '/wp-json/wp/v2' + path, opts);
+  const json = await resp.json().catch(() => null);
+  return { ok: resp.ok, status: resp.status, data: json };
+}
+
+/** タグIDを取得or作成 */
+async function _wpGetOrCreateTag(base, user, pass, name) {
+  try {
+    const s = await _wpCall(base, user, pass, 'GET', `/tags?search=${encodeURIComponent(name)}&per_page=5`);
+    if (s.ok && s.data) {
+      const found = s.data.find(t => t.name === name);
+      if (found) return found.id;
+    }
+    const c = await _wpCall(base, user, pass, 'POST', '/tags', { name });
+    return c.ok ? c.data.id : null;
+  } catch { return null; }
+}
+
+/** カテゴリIDを取得 */
+async function _wpGetCategoryId(base, user, pass, name) {
+  try {
+    const r = await _wpCall(base, user, pass, 'GET', `/categories?search=${encodeURIComponent(name)}&per_page=20`);
+    if (r.ok && r.data) {
+      const found = r.data.find(c => c.name === name);
+      if (found) return found.id;
+    }
+    return null;
+  } catch { return null; }
+}
+
+/** 投稿者（編集部）のユーザーIDを取得 */
+async function _wpGetWriterId(base, user, pass) {
+  try {
+    const r = await _wpCall(base, user, pass, 'GET', '/users?per_page=100&context=edit');
+    if (r.ok && r.data) {
+      const found = r.data.find(u => u.name && u.name.includes('編集部'));
+      if (found) return found.id;
+    }
+    return null;
+  } catch { return null; }
+}
+
+/** ブラウザから画像をWPメディアにアップロード */
+async function _wpUploadImage(base, user, pass, imageUrl) {
+  if (!imageUrl || imageUrl.startsWith('blob:')) return null;
+  try {
+    // 画像をArrayBufferで取得
+    const imgResp = await fetch(imageUrl);
+    if (!imgResp.ok) return null;
+    const blob = await imgResp.blob();
+    const ext = blob.type.includes('png') ? 'png' : 'jpg';
+    const form = new FormData();
+    form.append('file', blob, `product-image.${ext}`);
+    const resp = await fetch(base.replace(/\/$/, '') + '/wp-json/wp/v2/media', {
+      method: 'POST',
+      headers: {
+        'Authorization': _wpAuth(user, pass),
+        'Content-Disposition': `attachment; filename="product-image.${ext}"`,
+      },
+      body: form,
+    });
+    if (resp.ok) {
+      const d = await resp.json();
+      return d.id || null;
+    }
+    return null;
+  } catch { return null; }
+}
 
 function openPostPanel() {
   setStep(4);
@@ -1922,6 +2007,7 @@ async function publishArticle() {
   if (mode === 'future') {
     const v = document.getElementById('post-schedule').value;
     if (!v) { flashHint('予約投稿の日時を入力してください'); return; }
+    // WordPress は ISO8601（UTC）を期待: "2026-06-10T09:00:00"
     schedule = v + ':00';
   }
 
@@ -1929,54 +2015,61 @@ async function publishArticle() {
   const resultBox = document.getElementById('post-result');
   btn.disabled = true;
   const origLabel = btn.textContent;
-  btn.textContent = '投稿中…（画像取り込みで時間がかかります）';
+  btn.textContent = '接続中…';
   resultBox.innerHTML = '';
 
-  // WPサーバーがダウンロードできるURL優先順:
-  //   1. CDN直リンク (source_url) ← WPサーバーが直接アクセス可
-  //   2. S3プロキシURL (articleImageUrl) ← フォールバック
-  //   3. blob: や空は除外
-  const imgMeta = result.image_meta || null;
-  let wpImageUrl = (imgMeta && imgMeta.source_url) || '';
-  if (!wpImageUrl && articleImageUrl && articleImageUrl.startsWith('http') && !articleImageUrl.startsWith('blob:')) {
-    wpImageUrl = articleImageUrl;
-  }
-
-  const post = {
-    filename:           result.slug || 'article',
-    title:              result.title || '',
-    content:            result.html || '',
-    tags:               '',
-    brand:              result.brand_jp || result.brand_key || '',
-    featured_image_url: wpImageUrl,
-    category:           cat,
-    schedule:           schedule,
-    status:             mode,
-  };
-
   try {
-    const resp = await fetch(PUBLISH_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ posts: [post] }),
-    });
-    let data;
-    try {
-      data = await resp.json();
-    } catch (_) {
-      const txt = await resp.text().catch(() => '(レスポンス取得失敗)');
-      throw new Error(`HTTP ${resp.status}: サーバーエラー — ${txt.slice(0, 200)}`);
+    // Step1: WP認証情報をバックエンドから取得
+    const cfgResp = await fetch(WP_CONFIG_URL);
+    if (!cfgResp.ok) throw new Error('WP設定の取得に失敗しました（ログイン切れの可能性）');
+    const cfg = await cfgResp.json();
+    const { base_url, user, app_password } = cfg;
+    if (!user || !app_password) throw new Error('WP_USER / WP_APP_PASSWORD が未設定です');
+
+    btn.textContent = 'タグ・カテゴリ取得中…';
+
+    // Step2: カテゴリ・タグ・投稿者をブラウザから直接WPに問い合わせ
+    const brandName = result.brand_jp || result.brand_key || '';
+    const [catId, brandTagId, writerId] = await Promise.all([
+      _wpGetCategoryId(base_url, user, app_password, cat),
+      brandName ? _wpGetOrCreateTag(base_url, user, app_password, brandName) : Promise.resolve(null),
+      _wpGetWriterId(base_url, user, app_password),
+    ]);
+
+    // Step3: 画像アップロード（CDN or S3プロキシURLをブラウザ経由でWPメディアへ）
+    btn.textContent = '画像アップロード中…';
+    const imgMeta = result.image_meta || null;
+    let wpImageUrl = (imgMeta && imgMeta.source_url) || '';
+    if (!wpImageUrl && articleImageUrl && articleImageUrl.startsWith('http') && !articleImageUrl.startsWith('blob:')) {
+      wpImageUrl = articleImageUrl;
     }
-    if (!resp.ok && !data.results) {
-      throw new Error(data.error || `HTTP ${resp.status}`);
+    let featuredMediaId = null;
+    if (wpImageUrl) {
+      featuredMediaId = await _wpUploadImage(base_url, user, app_password, wpImageUrl);
     }
 
-    const r0 = (data.results && data.results[0]) || {};
-    if (r0.success) {
-      const label = { publish: '公開', future: '予約投稿', draft: '下書き保存' }[r0.status] || r0.status;
-      resultBox.innerHTML = `<span class="ok">✓ ${label}完了（ID: ${r0.id}）</span>` +
-        (r0.link ? `<br><a href="${r0.link}" target="_blank" rel="noopener">${r0.link}</a>` : '');
+    // Step4: 投稿作成（ブラウザ→WordPress直接）
+    btn.textContent = '投稿送信中…';
+    const postBody = {
+      title:   result.title || '',
+      content: result.html  || '',
+      status:  mode,
+      ...(schedule ? { date: schedule } : {}),
+      ...(catId        ? { categories: [catId] }     : {}),
+      ...(brandTagId   ? { tags: [brandTagId] }       : {}),
+      ...(writerId     ? { author: writerId }          : {}),
+      ...(featuredMediaId ? { featured_media: featuredMediaId } : {}),
+    };
+    const postResp = await _wpCall(base_url, user, app_password, 'POST', '/posts', postBody);
+
+    if (postResp.ok && postResp.data && postResp.data.id) {
+      const wpPost = postResp.data;
+      const label = { publish: '公開', future: '予約投稿', draft: '下書き保存' }[wpPost.status] || wpPost.status;
+      const link  = wpPost.link || '';
+      resultBox.innerHTML = `<span class="ok">✓ ${label}完了（ID: ${wpPost.id}）</span>` +
+        (link ? `<br><a href="${link}" target="_blank" rel="noopener">${link}</a>` : '');
       btn.textContent = '投稿済み ✓';
+
       // 投稿ログに記録
       fetch('log-post', {
         method: 'POST',
@@ -1985,16 +2078,16 @@ async function publishArticle() {
           brand:      result.brand_key || '',
           slug:       result.slug || '',
           title:      result.title || '',
-          wp_id:      r0.id,
-          wp_link:    r0.link || '',
-          wp_status:  r0.status || mode,
+          wp_id:      wpPost.id,
+          wp_link:    link,
+          wp_status:  wpPost.status || mode,
           image_url:  wpImageUrl || articleImageUrl || '',
           char_count: (result.article || '').length,
           date: new Date().toLocaleDateString('ja-JP', { year:'numeric', month:'numeric', day:'numeric' }).replace(/\//g, '.'),
         }),
       }).catch(() => {});
     } else {
-      const errMsg = typeof r0.error === 'string' ? r0.error : (data.error || JSON.stringify(r0.error || data));
+      const errMsg = (postResp.data && (postResp.data.message || JSON.stringify(postResp.data))) || `HTTP ${postResp.status}`;
       resultBox.innerHTML = `<span class="ng">✗ 投稿失敗: ${escapeHtml(errMsg)}</span>`;
       btn.disabled = false;
       btn.textContent = origLabel;
