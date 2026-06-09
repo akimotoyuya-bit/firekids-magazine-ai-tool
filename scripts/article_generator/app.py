@@ -490,15 +490,25 @@ def scan_wordpress_posts(incremental: bool = True) -> dict:
             new_hash     = ArticleVectorStore.content_hash(content_html)
             existing     = store.get(pid)
 
-            if existing and not ArticleVectorStore.needs_reembed(existing, new_hash, EMBED_MODEL_ID):
-                total_skipped += 1
-                continue  # 変更なし・Embedding スキップ
-
-            title    = strip_tags(p.get("title",   {}).get("rendered", ""))
-            excerpt  = strip_tags(p.get("excerpt", {}).get("rendered", ""))[:300]
             cats     = p.get("categories", [])
+            title    = strip_tags(p.get("title",   {}).get("rendered", ""))
             modified = p.get("modified", p.get("date", ""))[:19]
             url      = p.get("link", "")
+
+            if existing and not ArticleVectorStore.needs_reembed(existing, new_hash, EMBED_MODEL_ID):
+                # content は変わっていないが brand_categories が空なら補完だけ行う
+                if not existing.get("brand_categories") and cats:
+                    existing["brand_categories"] = cats
+                    existing["title"]    = existing.get("title") or title
+                    existing["url"]      = existing.get("url")   or url
+                    existing["modified"] = existing.get("modified") or modified
+                    store.upsert(existing)
+                    total_updated += 1
+                else:
+                    total_skipped += 1
+                continue  # Embedding スキップ
+
+            excerpt  = strip_tags(p.get("excerpt", {}).get("rendered", ""))[:300]
 
             # H2 セクション抽出
             h2_sections = extract_h2_sections(content_html, body_chars=400)
@@ -1604,6 +1614,74 @@ def scan():
         return jsonify({"ok": False, "error": "スキャンは既に実行中です", "running": True})
     m = get_store().meta()
     return jsonify({"ok": True, **m, "last_error": _SCAN_STATE["last_error"]})
+
+
+@app.route("/patch-categories", methods=["POST"])
+def patch_categories():
+    """既存S3レコードの brand_categories が空のものをWP APIから高速補完する。
+    Embeddingは実行しない。カテゴリフィルタが正しく機能しない場合に実行する。
+    """
+    def _do_patch():
+        wp_base  = os.getenv("WP_BASE_URL", "").rstrip("/")
+        wp_user  = os.getenv("WP_USER",     "")
+        wp_pass  = os.getenv("WP_APP_PASSWORD", "")
+        if not wp_base or not wp_user or not wp_pass:
+            log.warning("patch_categories: WP credentials missing")
+            return {"ok": False, "error": "WP認証情報が未設定"}
+
+        store = get_store()
+        all_records = store.list_all()
+        # brand_categories が空のレコードを対象にする
+        target = [r for r in all_records if not r.get("brand_categories")]
+        log.info("patch_categories: target=%d / total=%d", len(target), len(all_records))
+        if not target:
+            return {"ok": True, "patched": 0, "message": "補完対象なし（全レコード設定済み）"}
+
+        auth     = (wp_user, wp_pass)
+        api_base = f"{wp_base}/wp-json/wp/v2/posts"
+        patched  = 0
+        failed   = 0
+        # 100件ずつWP APIで id in(...) 問い合わせ
+        chunk_size = 100
+        for i in range(0, len(target), chunk_size):
+            chunk = target[i:i + chunk_size]
+            ids   = [r["post_id"] for r in chunk]
+            try:
+                resp = requests.get(
+                    api_base,
+                    params={
+                        "include": ",".join(str(x) for x in ids),
+                        "per_page": len(ids),
+                        "_fields": "id,categories",
+                    },
+                    auth=auth, timeout=30,
+                    headers={"User-Agent": "FireKidsMagazineTool/1.0"},
+                )
+                if resp.status_code != 200:
+                    log.warning("patch_categories: WP API error %s", resp.status_code)
+                    failed += len(chunk)
+                    continue
+                posts = {p["id"]: p.get("categories", []) for p in resp.json()}
+                for rec in chunk:
+                    pid  = rec["post_id"]
+                    cats = posts.get(pid, [])
+                    if cats:
+                        rec["brand_categories"] = cats
+                        store.upsert(rec)
+                        patched += 1
+            except Exception as e:
+                log.warning("patch_categories chunk error: %s", e)
+                failed += len(chunk)
+        store.flush()
+        log.info("patch_categories done patched=%d failed=%d", patched, failed)
+        return {"ok": True, "patched": patched, "failed": failed,
+                "total_target": len(target), "total_records": len(all_records)}
+
+    try:
+        result = _do_patch()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
 
 
 @app.route("/scan-status")

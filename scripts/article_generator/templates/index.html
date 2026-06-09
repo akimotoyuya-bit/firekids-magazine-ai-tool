@@ -1289,8 +1289,10 @@ textarea.direction-input {
               <div class="advanced-sub">過去記事スキャン</div>
               <div class="scan-row">
                 <button class="btn-ghost-sm" id="scan-btn" onclick="manualScan()">増分スキャンを実行</button>
+                <button class="btn-ghost-sm" id="patch-cat-btn" onclick="patchCategories()" style="margin-left:8px;">カテゴリ情報を補完</button>
                 <span id="scan-detail" style="font-size:12px;color:var(--text-muted);"></span>
               </div>
+              <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">カテゴリ情報を補完: S3の過去記事にカテゴリIDが入っていない場合に実行。Embeddingなしで高速に補完します。</div>
             </div>
           </details>
         </div>
@@ -1537,6 +1539,25 @@ async function manualScan() {
   try {
     await fetch('scan', { method: 'POST' }).then(r => r.json());
   } catch(e) {}
+  btn.disabled = false;
+  checkDedup();
+}
+
+async function patchCategories() {
+  const btn    = document.getElementById('patch-cat-btn');
+  const detail = document.getElementById('scan-detail');
+  btn.disabled = true;
+  detail.textContent = 'カテゴリ補完中…';
+  try {
+    const d = await fetch('patch-categories', { method: 'POST' }).then(r => r.json());
+    if (d.ok) {
+      detail.textContent = `補完完了: ${d.patched}件更新 / 対象${d.total_target}件 / 全${d.total_records}件`;
+    } else {
+      detail.textContent = `エラー: ${d.error}`;
+    }
+  } catch(e) {
+    detail.textContent = `通信エラー: ${e.message}`;
+  }
   btn.disabled = false;
   checkDedup();
 }
