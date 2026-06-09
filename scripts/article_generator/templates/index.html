@@ -946,6 +946,24 @@ textarea.direction-input {
   padding: 0 4px; margin-bottom: -8px;
 }
 
+/* ── 保存済み一覧 - フィルターバー ── */
+.drafts-filter-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 0 16px; flex-wrap: wrap;
+}
+.drafts-filter-bar .filter-label {
+  font-size: 12px; color: #888; font-weight: 600; margin-right: 4px;
+}
+.sort-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 14px; border-radius: 999px; font-size: 12px; font-weight: 700;
+  border: 1.5px solid #d0d8e8; background: #fff; color: #555;
+  cursor: pointer; transition: all .15s;
+}
+.sort-btn:hover { border-color: var(--accent); color: var(--accent); }
+.sort-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.sort-btn svg { width: 13px; height: 13px; }
+
 /* ── 保存済み一覧 - NAS風カードグリッド ── */
 .draft-grid {
   display: grid;
@@ -2187,6 +2205,8 @@ async function generate(opts) {
                 content: result.article || '',
                 html: result.html || '',
                 image_meta: imageMeta,
+                // 表示中の画像URL（image_metaがない場合のフォールバック）
+                article_image_url: (articleImageUrl && !articleImageUrl.startsWith('blob:')) ? articleImageUrl : '',
               }),
             });
             if (r.status === 401) { flashHint('⚠ セッション切れ。再ログインしてください。'); return; }
@@ -2268,6 +2288,16 @@ function _fmtDate(s) {
 }
 
 /* ── 保存済み一覧（NAS風カードグリッド） ─────────────── */
+let _draftsData = [];
+let _draftSort = 'desc'; // 'desc' = 新しい順, 'asc' = 古い順
+
+function setDraftSort(order) {
+  _draftSort = order;
+  document.getElementById('sort-desc').classList.toggle('active', order === 'desc');
+  document.getElementById('sort-asc').classList.toggle('active', order === 'asc');
+  _renderDraftGrid(_draftsData);
+}
+
 function openDraftsPanel() {
   const panel = document.getElementById('panel-drafts');
   panel.classList.add('show');
@@ -2277,63 +2307,72 @@ function closeDraftsPanel() {
   document.getElementById('panel-drafts').classList.remove('show');
 }
 
+function _buildDraftCard(d) {
+  const hasImage = d.image_url && (d.image_url.startsWith('http') || d.image_url.startsWith('/'));
+  const thumbInner = hasImage
+    ? `<img class="draft-card-thumb" src="${_escHtml(d.image_url)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><div class="draft-card-thumb-placeholder" style="display:none">${SVG_FILE}</div>`
+    : `<div class="draft-card-thumb-placeholder">${SVG_FILE}</div>`;
+  const statusClass = d.has_html ? 'ready' : 'draft';
+  const statusLabel = d.has_html ? '投稿準備完了' : '下書き';
+
+  const card = document.createElement('article');
+  card.className = 'draft-card';
+  card.innerHTML = `
+    <div class="draft-card-thumb-wrap">
+      ${thumbInner}
+      <span class="draft-status-badge ${statusClass}"><span class="draft-status-dot"></span>${statusLabel}</span>
+    </div>
+    <div class="draft-card-body">
+      <div class="draft-card-meta">
+        <span class="brand-tag">${_escHtml(d.brand)}</span>
+        <span>${_fmtDate(d.saved_at)}</span>
+        <span>·</span>
+        <span>${d.char_count ? d.char_count.toLocaleString() + '文字' : ''}</span>
+      </div>
+      <div class="draft-card-title">${_escHtml(d.title || d.slug)}</div>
+      <div class="draft-card-excerpt">${_escHtml(d.excerpt || '')}</div>
+      <div class="draft-card-actions">
+        <button class="draft-btn-resume" title="プレビュー">${SVG_EYE} プレビュー</button>
+        <div class="draft-card-action-btns">
+          <button class="btn-edit" title="再開">${SVG_PENCIL}</button>
+          <button class="btn-delete" title="削除">${SVG_TRASH}</button>
+        </div>
+      </div>
+    </div>`;
+
+  card.querySelector('.draft-btn-resume').onclick = () => resumeDraft(d);
+  card.querySelector('.btn-edit').onclick = () => resumeDraft(d);
+  card.querySelector('.btn-delete').onclick = () => {
+    if (confirm(`「${d.title || d.slug}」を削除しますか？`)) deleteDraft(d, card);
+  };
+  return card;
+}
+
+function _renderDraftGrid(data) {
+  const body = document.getElementById('drafts-body');
+  const countEl = document.getElementById('drafts-count');
+  if (!data.length) {
+    body.innerHTML = '<div class="list-panel-empty">保存済みの記事はまだありません。<br>記事を生成すると自動的にここに保存されます。</div>';
+    if (countEl) countEl.textContent = '';
+    return;
+  }
+  const sorted = [...data].sort((a, b) => {
+    const ta = a.saved_at || '', tb = b.saved_at || '';
+    return _draftSort === 'desc' ? tb.localeCompare(ta) : ta.localeCompare(tb);
+  });
+  if (countEl) countEl.textContent = `${sorted.length} 件`;
+  body.innerHTML = '<div class="draft-grid" id="draft-grid"></div>';
+  const grid = document.getElementById('draft-grid');
+  sorted.forEach(d => grid.appendChild(_buildDraftCard(d)));
+}
+
 async function loadDrafts() {
   const body = document.getElementById('drafts-body');
   body.innerHTML = '<div class="list-panel-empty">読み込み中…</div>';
   try {
     const data = await fetch('drafts').then(r => r.json());
-    if (!data.length) {
-      body.innerHTML = '<div class="list-panel-empty">保存済みの記事はまだありません。<br>記事を生成すると自動的にここに保存されます。</div>';
-      return;
-    }
-    const countEl = document.getElementById('drafts-count');
-    if (countEl) countEl.textContent = `${data.length} 件`;
-
-    body.innerHTML = '<div class="draft-grid" id="draft-grid"></div>';
-    const grid = document.getElementById('draft-grid');
-
-    data.forEach(d => {
-      const hasImage = d.image_url && d.image_url.startsWith('http');
-      const thumbInner = hasImage
-        ? `<img class="draft-card-thumb" src="${_escHtml(d.image_url)}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><div class="draft-card-thumb-placeholder" style="display:none">${SVG_FILE}</div>`
-        : `<div class="draft-card-thumb-placeholder">${SVG_FILE}</div>`;
-      const statusClass = d.has_html ? 'ready' : 'draft';
-      const statusLabel = d.has_html ? '投稿準備完了' : '下書き';
-
-      const card = document.createElement('article');
-      card.className = 'draft-card';
-      card.innerHTML = `
-        <div class="draft-card-thumb-wrap">
-          ${thumbInner}
-          <span class="draft-status-badge ${statusClass}"><span class="draft-status-dot"></span>${statusLabel}</span>
-        </div>
-        <div class="draft-card-body">
-          <div class="draft-card-meta">
-            <span class="brand-tag">${_escHtml(d.brand)}</span>
-            <span>${_fmtDate(d.saved_at)}</span>
-            <span>·</span>
-            <span>${d.char_count ? d.char_count.toLocaleString() + '文字' : ''}</span>
-          </div>
-          <div class="draft-card-title">${_escHtml(d.title || d.slug)}</div>
-          <div class="draft-card-excerpt">${_escHtml(d.excerpt || '')}</div>
-          <div class="draft-card-actions">
-            <button class="draft-btn-resume" title="プレビュー">${SVG_EYE} プレビュー</button>
-            <div class="draft-card-action-btns">
-              <button class="btn-edit" title="再開">${SVG_PENCIL}</button>
-              <button class="btn-delete" title="削除">${SVG_TRASH}</button>
-            </div>
-          </div>
-        </div>`;
-
-      card.querySelector('.draft-btn-resume').onclick = () => resumeDraft(d);
-      card.querySelector('.btn-edit').onclick = () => resumeDraft(d);
-      card.querySelector('.btn-delete').onclick = () => {
-        if (confirm(`「${d.title || d.slug}」を削除しますか？`)) {
-          deleteDraft(d, card);
-        }
-      };
-      grid.appendChild(card);
-    });
+    _draftsData = data;
+    _renderDraftGrid(data);
   } catch(e) {
     body.innerHTML = `<div class="list-panel-empty">読み込み失敗: ${e.message}</div>`;
   }
@@ -2472,7 +2511,18 @@ document.getElementById('nav-posted').addEventListener('click', openPostsPanel);
       </div>
       <button class="list-panel-close" onclick="closeDraftsPanel()">✕</button>
     </div>
-    <div class="list-panel-count" id="drafts-count"></div>
+    <div class="drafts-filter-bar">
+      <span class="filter-label">並び替え</span>
+      <button class="sort-btn active" id="sort-desc" onclick="setDraftSort('desc')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 4h13M3 8h9M3 12h5M17 20V8M17 20l-4-4M17 20l4-4"/></svg>
+        新しい順
+      </button>
+      <button class="sort-btn" id="sort-asc" onclick="setDraftSort('asc')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 4h13M3 8h9M3 12h5M17 4v12M17 4l-4 4M17 4l4 4"/></svg>
+        古い順
+      </button>
+      <span class="list-panel-count" id="drafts-count" style="margin-left:auto;font-size:12px;color:#888;"></span>
+    </div>
     <div class="list-panel-body" id="drafts-body">
       <div class="list-panel-empty">読み込み中…</div>
     </div>

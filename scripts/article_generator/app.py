@@ -1566,6 +1566,11 @@ def save_draft():
         image_url = image_meta.get("source_url") or ""
         if not image_url and image_meta.get("s3_key"):
             image_url = f"/generator/image-proxy?s3_key={image_meta['s3_key']}"
+    # フロントで表示中の画像URLをフォールバックとして使用（インポート画像対応）
+    if not image_url:
+        article_image_url = data.get("article_image_url", "")
+        if article_image_url and article_image_url.startswith("http"):
+            image_url = article_image_url
     meta_obj = {
         "title": title or slug.replace("-", " ").title(),
         "brand": brand_key,
