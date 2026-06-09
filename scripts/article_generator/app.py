@@ -897,7 +897,7 @@ def propose_structure(brand_key: str, tone: str = "auto", item: dict | None = No
   "tone": "選んだ記事タイプ（guide/verify/comparison/ranking のいずれか）",
   "h2s": ["見出し1", "見出し2", "見出し3", "見出し4", "見出し5", "見出し6"],
   "theme": "記事で扱う内容の詳細を2〜3文で",
-  "keywords": "キーワード1, キーワード2, キーワード3"}}""
+  "keywords": "キーワード1, キーワード2, キーワード3"}}"""
 
     def _parse_structure(raw: str) -> dict | None:
         m = re.search(r"\{.*\}", raw, re.DOTALL)
