@@ -1829,24 +1829,44 @@ async function publishArticle() {
   btn.textContent = '投稿中…（画像取り込みで時間がかかります）';
   resultBox.innerHTML = '';
 
+  // WPサーバーがダウンロードできるURL優先順:
+  //   1. CDN直リンク (source_url) ← WPサーバーが直接アクセス可
+  //   2. S3プロキシURL (articleImageUrl) ← フォールバック
+  //   3. blob: や空は除外
+  const imgMeta = result.image_meta || null;
+  let wpImageUrl = (imgMeta && imgMeta.source_url) || '';
+  if (!wpImageUrl && articleImageUrl && articleImageUrl.startsWith('http') && !articleImageUrl.startsWith('blob:')) {
+    wpImageUrl = articleImageUrl;
+  }
+
   const post = {
     filename:           result.slug || 'article',
     title:              result.title || '',
     content:            result.html || '',
     tags:               '',
     brand:              result.brand_jp || result.brand_key || '',
-    featured_image_url: articleImageUrl || '',
+    featured_image_url: wpImageUrl,
     category:           cat,
     schedule:           schedule,
     status:             mode,
   };
 
   try {
-    const data = await fetch(PUBLISH_URL, {
+    const resp = await fetch(PUBLISH_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ posts: [post] }),
-    }).then(r => r.json());
+    });
+    let data;
+    try {
+      data = await resp.json();
+    } catch (_) {
+      const txt = await resp.text().catch(() => '(レスポンス取得失敗)');
+      throw new Error(`HTTP ${resp.status}: サーバーエラー — ${txt.slice(0, 200)}`);
+    }
+    if (!resp.ok && !data.results) {
+      throw new Error(data.error || `HTTP ${resp.status}`);
+    }
 
     const r0 = (data.results && data.results[0]) || {};
     if (r0.success) {
@@ -1865,7 +1885,7 @@ async function publishArticle() {
           wp_id:      r0.id,
           wp_link:    r0.link || '',
           wp_status:  r0.status || mode,
-          image_url:  articleImageUrl || '',
+          image_url:  wpImageUrl || articleImageUrl || '',
           char_count: (result.article || '').length,
           date: new Date().toLocaleDateString('ja-JP', { year:'numeric', month:'numeric', day:'numeric' }).replace(/\//g, '.'),
         }),

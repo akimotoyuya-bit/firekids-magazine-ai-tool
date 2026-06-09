@@ -28,6 +28,13 @@ load_dotenv(override=True)
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 80 * 1024 * 1024  # 80MB
 
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    import traceback
+    traceback.print_exc()
+    return jsonify({'error': f'サーバーエラー: {str(e)}', 'type': type(e).__name__}), 500
+
 WP_BASE_URL = os.getenv('WP_BASE_URL', 'https://m.firekids.jp').rstrip('/')
 WP_USER = os.getenv('WP_USER', '')
 WP_APP_PASSWORD = os.getenv('WP_APP_PASSWORD', '')
@@ -136,65 +143,74 @@ def extract_brand(html_content):
 
 
 def get_or_create_tag(name):
-    r = requests.get(
-        f'{WP_BASE_URL}/wp-json/wp/v2/tags',
-        params={'search': name, 'per_page': 100},
-        auth=get_auth(),
-        headers=WP_HEADERS,
-        timeout=15,
-    )
-    if r.ok:
-        for t in r.json():
-            if t['name'] == name:
-                return t['id']
-    r = requests.post(
-        f'{WP_BASE_URL}/wp-json/wp/v2/tags',
-        json={'name': name},
-        auth=get_auth(),
-        headers=WP_HEADERS,
-        timeout=15,
-    )
-    if r.ok:
-        return r.json()['id']
-    if r.status_code == 400:
-        try:
-            existing = r.json().get('data', {}).get('term_id')
-            if existing:
-                return existing
-        except Exception:
-            pass
+    try:
+        r = requests.get(
+            f'{WP_BASE_URL}/wp-json/wp/v2/tags',
+            params={'search': name, 'per_page': 100},
+            auth=get_auth(),
+            headers=WP_HEADERS,
+            timeout=15,
+        )
+        if r.ok:
+            for t in r.json():
+                if t['name'] == name:
+                    return t['id']
+        r = requests.post(
+            f'{WP_BASE_URL}/wp-json/wp/v2/tags',
+            json={'name': name},
+            auth=get_auth(),
+            headers=WP_HEADERS,
+            timeout=15,
+        )
+        if r.ok:
+            return r.json()['id']
+        if r.status_code == 400:
+            try:
+                existing = r.json().get('data', {}).get('term_id')
+                if existing:
+                    return existing
+            except Exception:
+                pass
+    except Exception as e:
+        print(f'get_or_create_tag error ({name}): {e}')
     return None
 
 
 def get_category_id_by_name(name):
     """カテゴリ名から ID を取得（完全一致）"""
-    r = requests.get(
-        f'{WP_BASE_URL}/wp-json/wp/v2/categories',
-        params={'search': name, 'per_page': 100},
-        auth=get_auth(),
-        headers=WP_HEADERS,
-        timeout=15,
-    )
-    if r.ok:
-        for c in r.json():
-            if c['name'] == name:
-                return c['id']
+    try:
+        r = requests.get(
+            f'{WP_BASE_URL}/wp-json/wp/v2/categories',
+            params={'search': name, 'per_page': 100},
+            auth=get_auth(),
+            headers=WP_HEADERS,
+            timeout=15,
+        )
+        if r.ok:
+            for c in r.json():
+                if c['name'] == name:
+                    return c['id']
+    except Exception as e:
+        print(f'get_category_id_by_name error ({name}): {e}')
     return None
 
 
 def get_writer_user_id():
     """『編集部』を含むWPユーザーのIDを取得（ライター固定）"""
-    r = requests.get(
-        f'{WP_BASE_URL}/wp-json/wp/v2/users',
-        params={'per_page': 100, 'context': 'edit'},
-        auth=get_auth(),
-        headers=WP_HEADERS,
-        timeout=15,
-    )
-    if r.ok:
-        for u in r.json():
-            if WRITER_NAME_KEYWORD in u.get('name', ''):
-                return u['id']
+    try:
+        r = requests.get(
+            f'{WP_BASE_URL}/wp-json/wp/v2/users',
+            params={'per_page': 100, 'context': 'edit'},
+            auth=get_auth(),
+            headers=WP_HEADERS,
+            timeout=15,
+        )
+        if r.ok:
+            for u in r.json():
+                if WRITER_NAME_KEYWORD in u.get('name', ''):
+                    return u['id']
+    except Exception as e:
+        print(f'get_writer_user_id error: {e}')
     return None
 
 
@@ -367,42 +383,51 @@ def parse_text():
 
 @app.route('/publish', methods=['POST'])
 def publish():
-    data = request.get_json(silent=True) or {}
-    posts = data.get('posts', [])
+    try:
+        data = request.get_json(silent=True) or {}
+        posts = data.get('posts', [])
 
-    if not posts:
-        return jsonify({'error': '投稿データがありません'}), 400
-    if len(posts) > MAX_FILES:
-        return jsonify({'error': f'一度に投稿できるのは{MAX_FILES}件までです'}), 400
+        if not posts:
+            return jsonify({'error': '投稿データがありません'}), 400
+        if len(posts) > MAX_FILES:
+            return jsonify({'error': f'一度に投稿できるのは{MAX_FILES}件までです'}), 400
 
-    # ライター固定（編集部ユーザーのID取得）
-    author_id = get_writer_user_id()
+        author_id = get_writer_user_id()
 
-    results = []
-    for p in posts:
-        filename = p.get('filename', '(no filename)')
-        result = post_one(
-            title=clean_title((p.get('title') or '').strip()),
-            content=p.get('content') or '',
-            tags_input=p.get('tags', ''),
-            brand=p.get('brand'),
-            featured_image_url=p.get('featured_image_url'),
-            category_name=p.get('category'),
-            schedule=p.get('schedule'),
-            author_id=author_id,
-            status=p.get('status'),
-        )
-        result['filename'] = filename
-        results.append(result)
+        results = []
+        for p in posts:
+            filename = p.get('filename', '(no filename)')
+            try:
+                result = post_one(
+                    title=clean_title((p.get('title') or '').strip()),
+                    content=p.get('content') or '',
+                    tags_input=p.get('tags', ''),
+                    brand=p.get('brand'),
+                    featured_image_url=p.get('featured_image_url'),
+                    category_name=p.get('category'),
+                    schedule=p.get('schedule'),
+                    author_id=author_id,
+                    status=p.get('status'),
+                )
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                result = {'success': False, 'error': f'post_one例外: {str(e)}'}
+            result['filename'] = filename
+            results.append(result)
 
-    success_count = sum(1 for r in results if r.get('success'))
-    return jsonify({
-        'total': len(results),
-        'success_count': success_count,
-        'fail_count': len(results) - success_count,
-        'results': results,
-        'writer_id': author_id,
-    })
+        success_count = sum(1 for r in results if r.get('success'))
+        return jsonify({
+            'total': len(results),
+            'success_count': success_count,
+            'fail_count': len(results) - success_count,
+            'results': results,
+            'writer_id': author_id,
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'publish例外: {str(e)}', 'results': []}), 500
 
 
 @app.route('/upload-media', methods=['POST'])
