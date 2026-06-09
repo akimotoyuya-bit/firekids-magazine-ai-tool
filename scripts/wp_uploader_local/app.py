@@ -35,6 +35,8 @@ def _require_login():
     if request.endpoint in ("health", "ping", "static"):
         return
     if not session.get("authenticated"):
+        if request.is_json or request.headers.get("Accept", "").startswith("application/json") or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return jsonify({"error": "unauthenticated", "redirect": "/login"}), 401
         return redirect("/login")
 
 

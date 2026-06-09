@@ -2081,21 +2081,32 @@ async function generate(opts) {
           setTimeout(() => autoInsertImage(imageMeta), 400);
         }
 
-        // 自動保存（バックグラウンド）
-        fetch('save-draft', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            brand: result.brand_key || payload.brand,
-            slug: result.slug || 'article',
-            title: result.title || '',
-            content: result.article || '',
-            html: result.html || '',
-            image_meta: imageMeta,
-          }),
-        }).then(r => r.json()).then(d => {
-          if (d.ok) flashHint('記事を自動保存しました');
-        }).catch(() => {});
+        // 自動保存
+        (async () => {
+          try {
+            const r = await fetch('save-draft', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                brand: result.brand_key || payload.brand,
+                slug: result.slug || 'article',
+                title: result.title || '',
+                content: result.article || '',
+                html: result.html || '',
+                image_meta: imageMeta,
+              }),
+            });
+            if (r.status === 401) { flashHint('⚠ セッション切れ。再ログインしてください。'); return; }
+            const d = await r.json();
+            if (d.ok) {
+              flashHint('✓ 保存済み一覧に保存しました');
+            } else {
+              flashHint('⚠ 自動保存失敗: ' + (d.error || '不明なエラー'));
+            }
+          } catch(e) {
+            flashHint('⚠ 自動保存エラー: ' + e.message);
+          }
+        })();
 
         document.getElementById('go-image').onclick = () => insertImage(imageMeta);
         document.getElementById('import-image').onclick = () => { document.getElementById('image-import-file').click(); };
@@ -2257,7 +2268,7 @@ async function resumeDraft(d) {
   let html = '';
   if (d.has_html) {
     try {
-      const resp = await fetch(`/articles/${d.brand}/${d.number}_article_${d.slug}.html`);
+      const resp = await fetch(`draft-content/${d.brand}/${d.number}_article_${d.slug}.html`);
       if (resp.ok) html = await resp.text();
     } catch(e) { /* fallback */ }
   }

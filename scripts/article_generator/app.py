@@ -77,6 +77,9 @@ def _require_login():
     if request.endpoint in ("health", "static"):
         return
     if not session.get("authenticated"):
+        # AJAX/JSON リクエストには 401 JSON を返す（リダイレクトするとfetchが壊れる）
+        if request.is_json or request.headers.get("Accept", "").startswith("application/json") or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return jsonify({"error": "unauthenticated", "redirect": "/login"}), 401
         return redirect("/login")
 
 # ─── ロギング ──────────────────────────────────────────────────────────────────
@@ -1620,18 +1623,21 @@ def save_draft():
 
 
 def _restore_drafts_from_s3():
-    """S3 の drafts/ プレフィックスからメタデータと本文をローカルに復元する。"""
+    """S3 の drafts/ からメタ JSON のみをローカルに復元する（一覧表示用）。"""
     bucket = os.getenv("S3_BUCKET", "")
     if not bucket:
-        return
+        return 0
+    restored = 0
     try:
         s3 = _s3_client_simple()
         paginator = s3.get_paginator("list_objects_v2")
         articles_dir = ROOT / "articles"
         for page in paginator.paginate(Bucket=bucket, Prefix="drafts/"):
             for obj in page.get("Contents", []):
-                key = obj["Key"]  # e.g. drafts/BREITLING/001_article_Breitling_30S.meta.json
-                parts = key.split("/", 2)  # ["drafts", "BRAND", "filename"]
+                key = obj["Key"]
+                if not key.endswith(".meta.json"):
+                    continue
+                parts = key.split("/", 2)
                 if len(parts) < 3:
                     continue
                 brand_key, filename = parts[1], parts[2]
@@ -1642,23 +1648,24 @@ def _restore_drafts_from_s3():
                 brand_dir.mkdir(parents=True, exist_ok=True)
                 body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
                 local_path.write_bytes(body)
-        print(f"[drafts] S3 restore complete")
+                restored += 1
+        if restored:
+            print(f"[drafts] S3 restore: {restored} meta files restored")
     except Exception as e:
         print(f"[drafts] S3 restore error: {e}")
-
-
-_s3_drafts_restored = False
+    return restored
 
 
 @app.route("/drafts")
 def drafts():
-    """保存済み記事一覧を返す（articles/ ディレクトリ走査＋S3フォールバック）。"""
-    global _s3_drafts_restored
+    """保存済み記事一覧を返す（articles/ ディレクトリ走査＋S3同期）。"""
     articles_dir = ROOT / "articles"
 
-    # 初回のみ S3 から復元（コンテナ再デプロイ後）
-    if not _s3_drafts_restored:
-        _s3_drafts_restored = True
+    # ローカルが空の場合（コンテナ再起動後）は S3 からフル復元
+    local_meta_count = sum(
+        1 for p in articles_dir.rglob("*.meta.json")
+    ) if articles_dir.exists() else 0
+    if local_meta_count == 0:
         _restore_drafts_from_s3()
 
     result = []
@@ -1869,6 +1876,28 @@ def image_proxy():
         return Response(data, mimetype=content_type)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/draft-content/<brand>/<filename>")
+def draft_content(brand: str, filename: str):
+    """保存済み記事の本文HTMLを返す（resumeDraft 用）。"""
+    from flask import send_from_directory, abort
+    # パストラバーサル防止
+    if ".." in brand or ".." in filename or "/" in brand or "/" in filename:
+        abort(400)
+    p = ROOT / "articles" / brand / filename
+    if p.exists() and p.suffix in (".html", ".txt"):
+        return p.read_text(encoding="utf-8"), 200, {"Content-Type": "text/html; charset=utf-8"}
+    # ローカルになければ S3 から取得
+    bucket = os.getenv("S3_BUCKET", "")
+    if bucket:
+        try:
+            s3 = _s3_client_simple()
+            obj = s3.get_object(Bucket=bucket, Key=f"drafts/{brand}/{filename}")
+            return obj["Body"].read().decode("utf-8"), 200, {"Content-Type": "text/html; charset=utf-8"}
+        except Exception:
+            pass
+    abort(404)
 
 
 @app.route("/ping")
