@@ -1729,6 +1729,9 @@ def drafts():
                     pass
         result.extend(sorted(entries.values(), key=lambda x: x["saved_at"], reverse=True))
 
+    # 2026-06-09 以前の古い記事（Dockerイメージ混入分）を除外
+    result = [r for r in result if r.get("saved_at", "") >= "2026-06-09"]
+
     return jsonify(result)
 
 

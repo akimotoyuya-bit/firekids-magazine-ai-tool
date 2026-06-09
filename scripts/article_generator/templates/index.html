@@ -2513,11 +2513,11 @@ document.getElementById('nav-posted').addEventListener('click', openPostsPanel);
     </div>
     <div class="drafts-filter-bar">
       <span class="filter-label">並び替え</span>
-      <button class="sort-btn active" id="sort-desc" onclick="setDraftSort('desc')">
+      <button class="sort-btn active" id="sort-desc">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 4h13M3 8h9M3 12h5M17 20V8M17 20l-4-4M17 20l4-4"/></svg>
         新しい順
       </button>
-      <button class="sort-btn" id="sort-asc" onclick="setDraftSort('asc')">
+      <button class="sort-btn" id="sort-asc">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 4h13M3 8h9M3 12h5M17 4v12M17 4l-4 4M17 4l4 4"/></svg>
         古い順
       </button>
@@ -2546,5 +2546,10 @@ document.getElementById('nav-posted').addEventListener('click', openPostsPanel);
   </div>
 </div>
 
+<script>
+// ソートボタンはHTMLがscriptの後に来るためDOMContentLoadedで登録
+document.getElementById('sort-desc').addEventListener('click', function() { setDraftSort('desc'); });
+document.getElementById('sort-asc').addEventListener('click', function() { setDraftSort('asc'); });
+</script>
 </body>
 </html>

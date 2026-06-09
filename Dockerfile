@@ -12,7 +12,6 @@ COPY scripts/ /app/scripts/
 COPY CLAUDE.md /app/CLAUDE.md
 COPY data/ /app/data/
 COPY templates/ /app/templates/
-COPY articles/ /app/articles/
 
 ENV PYTHONPATH=/app:/app/scripts
 ENV PORT=8080
