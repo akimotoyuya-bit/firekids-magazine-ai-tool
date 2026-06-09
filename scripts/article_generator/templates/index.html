@@ -906,24 +906,22 @@ textarea.direction-input {
 /* ── 保存済み / 投稿済み一覧パネル（NAS風カードグリッド）─── */
 .list-panel {
   display: none; position: fixed; inset: 0; z-index: 1800;
-  background: rgba(220,228,240,0.85); backdrop-filter: blur(8px);
-  align-items: flex-start; justify-content: center;
-  padding: 40px 16px 16px; overflow-y: auto;
+  background: #e1eaf7; overflow-y: auto;
 }
-.list-panel.show { display: flex; }
+.list-panel.show { display: flex; justify-content: center; }
 .list-panel-inner {
-  background: transparent; width: 100%; max-width: 1180px;
+  background: transparent; width: 100%; max-width: 1100px;
   display: flex; flex-direction: column; gap: 20px;
+  padding: 36px 24px 60px;
 }
 .list-panel-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0 4px;
+  display: flex; align-items: flex-start; justify-content: space-between;
 }
-.list-panel-header h2 { font-size: 20px; font-weight: 800; color: #111; margin: 0; }
-.list-panel-header-sub { font-size: 13px; color: #888; font-weight: 400; margin-top: 2px; }
+.list-panel-header h2 { font-size: 22px; font-weight: 800; color: #10213f; margin: 0; }
+.list-panel-header-sub { font-size: 13px; color: #64788a; font-weight: 400; margin-top: 4px; }
 .list-panel-close {
   background: #fff; border: 1px solid rgba(20,44,92,0.12); font-size: 18px; cursor: pointer;
-  color: #555; padding: 6px 12px; border-radius: 10px;
+  color: #555; padding: 8px 14px; border-radius: 10px;
   transition: background .15s, box-shadow .15s;
   box-shadow: 0 1px 3px rgba(0,0,0,0.06);
 }
@@ -932,11 +930,12 @@ textarea.direction-input {
   flex: 1;
 }
 .list-panel-empty {
-  text-align: center; padding: 80px 0; color: #aaa; font-size: 14px;
+  text-align: center; padding: 80px 0; color: #8fa0b3; font-size: 14px;
   background: #fff; border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(20,44,92,0.06);
 }
 .list-panel-count {
-  font-size: 13px; color: #777; font-weight: 600;
+  font-size: 13px; color: #64788a; font-weight: 600;
   padding: 0 4px; margin-bottom: -8px;
 }
 

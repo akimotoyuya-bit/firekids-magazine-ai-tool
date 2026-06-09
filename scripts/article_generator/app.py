@@ -1591,6 +1591,13 @@ def save_draft():
                         ContentType="text/html; charset=utf-8",
                         **meta_extra,
                     )
+                # メタデータ JSON も S3 へ保存（一覧復元用）
+                s3.put_object(
+                    Bucket=bucket,
+                    Key=f"drafts/{brand_key}/{number}_article_{slug}.meta.json",
+                    Body=json.dumps(meta_obj, ensure_ascii=False, indent=2).encode("utf-8"),
+                    ContentType="application/json",
+                )
             except Exception as e:
                 print(f"[save-draft] S3 backup error: {e}")
         import threading as _threading
@@ -1604,10 +1611,48 @@ def save_draft():
     })
 
 
+def _restore_drafts_from_s3():
+    """S3 の drafts/ プレフィックスからメタデータと本文をローカルに復元する。"""
+    bucket = os.getenv("S3_BUCKET", "")
+    if not bucket:
+        return
+    try:
+        s3 = _s3_client_simple()
+        paginator = s3.get_paginator("list_objects_v2")
+        articles_dir = ROOT / "articles"
+        for page in paginator.paginate(Bucket=bucket, Prefix="drafts/"):
+            for obj in page.get("Contents", []):
+                key = obj["Key"]  # e.g. drafts/BREITLING/001_article_Breitling_30S.meta.json
+                parts = key.split("/", 2)  # ["drafts", "BRAND", "filename"]
+                if len(parts) < 3:
+                    continue
+                brand_key, filename = parts[1], parts[2]
+                brand_dir = articles_dir / brand_key
+                local_path = brand_dir / filename
+                if local_path.exists():
+                    continue
+                brand_dir.mkdir(parents=True, exist_ok=True)
+                body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+                local_path.write_bytes(body)
+        print(f"[drafts] S3 restore complete")
+    except Exception as e:
+        print(f"[drafts] S3 restore error: {e}")
+
+
+_s3_drafts_restored = False
+
+
 @app.route("/drafts")
 def drafts():
-    """保存済み記事一覧を返す（articles/ ディレクトリ走査）。"""
+    """保存済み記事一覧を返す（articles/ ディレクトリ走査＋S3フォールバック）。"""
+    global _s3_drafts_restored
     articles_dir = ROOT / "articles"
+
+    # 初回のみ S3 から復元（コンテナ再デプロイ後）
+    if not _s3_drafts_restored:
+        _s3_drafts_restored = True
+        _restore_drafts_from_s3()
+
     result = []
     if not articles_dir.exists():
         return jsonify([])
@@ -1618,7 +1663,6 @@ def drafts():
         brand_key = brand_dir.name
         entries: dict[str, dict] = {}
         for f in sorted(brand_dir.iterdir(), reverse=True):
-            # .meta.json を優先的に読み込む
             if f.name.endswith(".meta.json"):
                 m = re.match(r"^(\d+)_article_(.+)\.meta\.json$", f.name)
                 if not m:
@@ -1691,6 +1735,23 @@ def delete_draft():
         if p.exists():
             p.unlink()
             deleted.append(str(p.relative_to(ROOT)))
+
+    # S3 からも削除（バックグラウンド）
+    bucket = os.getenv("S3_BUCKET", "")
+    if bucket:
+        def _s3_delete():
+            try:
+                s3 = _s3_client_simple()
+                for ext in ("txt", "html", "meta.json"):
+                    try:
+                        s3.delete_object(Bucket=bucket, Key=f"drafts/{brand}/{number}_article_{slug}.{ext}")
+                    except Exception:
+                        pass
+            except Exception as e:
+                print(f"[delete-draft] S3 delete error: {e}")
+        import threading as _threading
+        _threading.Thread(target=_s3_delete, daemon=True).start()
+
     return jsonify({"ok": True, "deleted": deleted})
 
 
