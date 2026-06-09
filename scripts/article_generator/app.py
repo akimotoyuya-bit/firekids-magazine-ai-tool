@@ -45,7 +45,7 @@ from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template, request, session, Response
+from flask import Flask, jsonify, redirect, render_template, request, session, Response
 
 # 兄弟モジュール（vector_store / inventory）を、
 # - ローカル実行（python app.py / cwd=このフォルダ）
@@ -70,6 +70,14 @@ load_dotenv(ROOT / "scripts" / "article_generator" / ".env", override=True)
 
 app = Flask(__name__)
 app.secret_key = os.getenv("APP_SECRET_KEY", "firekids-default-secret-change-me")
+
+
+@app.before_request
+def _require_login():
+    if request.endpoint in ("health", "static"):
+        return
+    if not session.get("authenticated"):
+        return redirect("/login")
 
 # ─── ロギング ──────────────────────────────────────────────────────────────────
 # ジョブの進行を追跡するための構造化ログ。秘密情報（キー・パスワード等）は
