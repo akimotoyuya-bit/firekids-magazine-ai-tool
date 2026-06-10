@@ -2885,11 +2885,49 @@ function _xUpdateCharCount() {
   btn.disabled = !ta.value.trim();
 }
 
+/* 記事タイトルからクリックしたくなる X 投稿文を生成する */
+function _buildXText(title, link) {
+  // タイトルを分解してフック・本体・URLの3パート構成にする
+  // 例: 「地味すぎると思っていた。でも40代になってロレックス デイトジャストが一番かっこよく見えた理由」
+  //   → 冒頭に問いかけ or 共感フレーズ、中盤にテンション語、末尾にCTA
+
+  // ① タイトルに含まれる「疑問・逆説・数字」を拾ってフックに活かす
+  const hasQuestion  = /[？?]/.test(title);
+  const hasContrast  = /でも|だけど|なのに|実は|意外|じつは|気づいたら|知らなかった/.test(title);
+  const hasNumber    = /[0-9０-９一二三四五六七八九十百千万]+[個本件選年代]/.test(title);
+  const hasTrend     = /トレンド|今|2025|2026|値上がり|注目|話題/.test(title);
+  const hasBasic     = /基礎|とは|初心者|入門|知識/.test(title);
+
+  let hook = '';
+  if (hasQuestion) {
+    hook = 'あなたも気になっていませんか？\n\n';
+  } else if (hasContrast) {
+    hook = '「そうじゃないかも」と思い始めた話。\n\n';
+  } else if (hasTrend) {
+    hook = '今これを知らないと後悔するかも。\n\n';
+  } else if (hasBasic) {
+    hook = '意外と知らない人が多い話です。\n\n';
+  } else if (hasNumber) {
+    hook = 'この本数だけ読めば十分。\n\n';
+  } else {
+    hook = 'FIRE KIDSが記事にしました。\n\n';
+  }
+
+  // ② タイトルを "引用符" で囲んで存在感を出す
+  const quotedTitle = `📝 ${title}`;
+
+  // ③ CTA
+  const cta = `\n\n▶️ 続きを読む\n${link}`;
+
+  // ④ ハッシュタグ（brand タグはカードから取れないためここでは汎用）
+  const tags = `\n\n#FIREKIDS #ヴィンテージ時計 #腕時計好きと繋がりたい`;
+
+  return hook + quotedTitle + cta + tags;
+}
+
 function _xSelectPost(p, cardEl) {
   const ta = document.getElementById('x-compose-text');
-  const title = p.title || '';
-  const link  = p.wp_link || '';
-  ta.value = `${title}\n\n詳しくはこちら👇\n${link}\n\n#FIREKIDS #ヴィンテージ時計`;
+  ta.value = _buildXText(p.title || '', p.wp_link || '');
   _xUpdateCharCount();
   document.querySelectorAll('#x-posts-body .post-card').forEach(c => c.classList.remove('x-selected'));
   if (cardEl) cardEl.classList.add('x-selected');
@@ -3039,7 +3077,7 @@ document.getElementById('nav-x').addEventListener('click', openXPanel);
 
     <div class="x-compose-card">
       <div class="x-compose-label">投稿文（編集できます）</div>
-      <textarea id="x-compose-text" rows="5" placeholder="下の一覧から記事を選ぶと、投稿文がここに自動入力されます"></textarea>
+      <textarea id="x-compose-text" rows="8" placeholder="下の一覧から記事を選ぶと、投稿文がここに自動入力されます"></textarea>
       <div class="x-compose-footer">
         <span id="x-char-count">0 / 280</span>
         <button class="x-post-btn" id="x-post-btn" disabled>
