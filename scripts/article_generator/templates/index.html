@@ -1186,6 +1186,100 @@ textarea.direction-input {
 }
 .dpm-btn-post:hover { filter: brightness(1.1); }
 
+/* ── スケジュールカレンダー ──────────────────────────── */
+.sched-layout {
+  display: grid; grid-template-columns: 340px 1fr; gap: 20px; align-items: start;
+}
+@media (max-width: 820px) { .sched-layout { grid-template-columns: 1fr; } }
+.cal-card {
+  background: #fff; border: 1px solid rgba(20,44,92,0.11); border-radius: 16px;
+  overflow: hidden; box-shadow: 0 1px 2px rgba(20,44,92,0.06), 0 8px 18px rgba(20,44,92,0.08);
+}
+.cal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px; border-bottom: 1px solid #edf0f7;
+}
+.cal-month-label { font-size: 15px; font-weight: 800; color: #10213f; }
+.cal-nav-btn {
+  background: none; border: 1px solid #d8e0ec; border-radius: 8px; padding: 5px 11px;
+  font-size: 14px; cursor: pointer; color: #555; transition: background .15s;
+}
+.cal-nav-btn:hover { background: #f0f4fb; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); border-top: 1px solid #edf0f7; }
+.cal-dow {
+  text-align: center; font-size: 10px; font-weight: 700; color: #aab8d0;
+  padding: 8px 0; border-bottom: 1px solid #edf0f7;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.cal-dow:first-child { color: #d33; }
+.cal-dow:last-child  { color: #4477cc; }
+.cal-cell {
+  position: relative; min-height: 50px; padding: 6px 0 4px;
+  text-align: center; cursor: pointer;
+  border-right: 1px solid #edf0f7; border-bottom: 1px solid #edf0f7;
+  transition: background .1s; display: flex; flex-direction: column; align-items: center; gap: 3px;
+}
+.cal-cell:nth-child(7n) { border-right: none; }
+.cal-cell:hover { background: #f5f8ff; }
+.cal-cell.other-month { opacity: 0.28; pointer-events: none; }
+.cal-cell.today .cal-day {
+  background: #1267f2; color: #fff; border-radius: 50%;
+  width: 24px; height: 24px; line-height: 24px; font-weight: 800;
+}
+.cal-cell.selected { background: #e8effe; }
+.cal-day { font-size: 12px; font-weight: 600; color: #333; line-height: 24px; min-width: 24px; }
+.cal-cell:nth-child(7n+1) .cal-day { color: #d33; }
+.cal-cell:nth-child(7n)   .cal-day { color: #4477cc; }
+.cal-dots { display: flex; gap: 2px; justify-content: center; flex-wrap: wrap; max-width: 36px; }
+.cal-dot { width: 6px; height: 6px; border-radius: 50%; }
+.cal-dot.published { background: #1267f2; }
+.cal-dot.future    { background: #f97316; }
+.cal-dot.draft     { background: #e0b84b; }
+.cal-legend {
+  display: flex; gap: 14px; padding: 10px 18px; border-top: 1px solid #edf0f7;
+  font-size: 11px; color: #666;
+}
+.cal-legend span { display: flex; align-items: center; gap: 4px; }
+.sched-day-panel {
+  background: #fff; border: 1px solid rgba(20,44,92,0.11); border-radius: 16px;
+  overflow: hidden; box-shadow: 0 1px 2px rgba(20,44,92,0.06), 0 8px 18px rgba(20,44,92,0.08);
+  min-height: 300px;
+}
+.sched-day-header {
+  padding: 14px 18px; border-bottom: 1px solid #edf0f7;
+  font-size: 14px; font-weight: 800; color: #10213f;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.sched-day-count {
+  font-size: 11px; font-weight: 400; color: #888;
+  background: #f0f4fb; border-radius: 999px; padding: 2px 10px;
+}
+.sched-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 18px; border-bottom: 1px solid #f0f2f7;
+  transition: background .12s;
+}
+.sched-item:last-child { border-bottom: none; }
+.sched-item:hover { background: #f7f9fd; }
+.sched-item-thumb {
+  width: 60px; height: 42px; border-radius: 8px; overflow: hidden;
+  background: linear-gradient(135deg,#e9f0fa,#dce5f2); flex-shrink: 0;
+}
+.sched-item-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.sched-item-body { flex: 1; min-width: 0; }
+.sched-item-title {
+  font-size: 13px; font-weight: 700; color: #111;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px;
+}
+.sched-item-meta { font-size: 11px; color: #888; display: flex; gap: 8px; align-items: center; }
+.sched-status-badge {
+  font-size: 10px; font-weight: 700; padding: 1px 8px; border-radius: 999px; flex-shrink: 0;
+}
+.sched-status-badge.published { background: #dbeafe; color: #1e40af; }
+.sched-status-badge.future    { background: #ffedd5; color: #c2410c; }
+.sched-status-badge.draft     { background: #fef9c3; color: #92400e; }
+.sched-day-empty { padding: 40px; text-align: center; color: #b0bec5; font-size: 13px; }
+
 /* ── X（Twitter）投稿パネル ─────────────────────────── */
 .x-compose-card {
   background: #fff; border: 1px solid rgba(20,44,92,0.11); border-radius: 16px;
@@ -1297,12 +1391,6 @@ textarea.direction-input {
     <button class="sidebar-item" id="nav-schedule">
       <span class="icon">◷</span> スケジュール
     </button>
-    <button class="sidebar-item" id="nav-prompt">
-      <span class="icon">⊞</span> プロンプト設定
-    </button>
-    <a href="../upload/" class="sidebar-item">
-      <span class="icon">⇪</span> WP 投稿
-    </a>
   </nav>
 
   <!-- ─── Main ─────────────────────────────────────────── -->
@@ -2865,6 +2953,146 @@ async function loadPosts() {
   }
 }
 
+/* ── スケジュールカレンダー ──────────────────────────── */
+let _schedData   = [];
+let _calYear     = 0;
+let _calMonth    = 0;
+let _calSelected = null;
+
+function openSchedulePanel() {
+  document.getElementById('panel-schedule').classList.add('show');
+  const now = new Date();
+  _calYear  = now.getFullYear();
+  _calMonth = now.getMonth();
+  _loadAndRenderSchedule();
+}
+function closeSchedulePanel() {
+  document.getElementById('panel-schedule').classList.remove('show');
+}
+
+async function _loadAndRenderSchedule() {
+  try { _schedData = await fetch('posts-log').then(r => r.json()); }
+  catch(_) { _schedData = []; }
+  _renderCalendar();
+  _calSelectDay(new Date().toISOString().slice(0, 10));
+}
+
+function _buildDateMap() {
+  const map = {};
+  _schedData.forEach(p => {
+    let raw = (p.date || p.logged_at || '').replace(/\./g, '-').slice(0, 10);
+    if (!raw || raw.length < 10) return;
+    if (!map[raw]) map[raw] = [];
+    map[raw].push({ title: p.title || '（タイトルなし）', status: p.wp_status || 'publish', image_url: p.image_url || '', wp_link: p.wp_link || '', brand: p.brand || '' });
+  });
+  return map;
+}
+
+function _renderCalendar() {
+  document.getElementById('cal-month-label').textContent = `${_calYear}年 ${_calMonth + 1}月`;
+  const dateMap      = _buildDateMap();
+  const grid         = document.getElementById('cal-grid');
+  grid.innerHTML     = '';
+  ['日','月','火','水','木','金','土'].forEach(d => {
+    const el = document.createElement('div');
+    el.className = 'cal-dow'; el.textContent = d; grid.appendChild(el);
+  });
+  const firstDay    = new Date(_calYear, _calMonth, 1).getDay();
+  const daysInMonth = new Date(_calYear, _calMonth + 1, 0).getDate();
+  const daysInPrev  = new Date(_calYear, _calMonth, 0).getDate();
+  const todayStr    = new Date().toISOString().slice(0, 10);
+  const total       = Math.ceil((firstDay + daysInMonth) / 7) * 7;
+
+  for (let i = 0; i < total; i++) {
+    const cell = document.createElement('div');
+    cell.className = 'cal-cell';
+    let dateStr;
+    if (i < firstDay) {
+      const d = daysInPrev - firstDay + i + 1;
+      const pM = _calMonth === 0 ? 12 : _calMonth;
+      const pY = _calMonth === 0 ? _calYear - 1 : _calYear;
+      dateStr = `${pY}-${String(pM).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      cell.classList.add('other-month');
+    } else if (i >= firstDay + daysInMonth) {
+      const d = i - firstDay - daysInMonth + 1;
+      const nM = _calMonth === 11 ? 1 : _calMonth + 2;
+      const nY = _calMonth === 11 ? _calYear + 1 : _calYear;
+      dateStr = `${nY}-${String(nM).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      cell.classList.add('other-month');
+    } else {
+      const d = i - firstDay + 1;
+      dateStr = `${_calYear}-${String(_calMonth + 1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      if (dateStr === todayStr)     cell.classList.add('today');
+      if (dateStr === _calSelected) cell.classList.add('selected');
+    }
+    const dayEl = document.createElement('div');
+    dayEl.className = 'cal-day';
+    dayEl.textContent = parseInt(dateStr.slice(8), 10);
+    cell.appendChild(dayEl);
+    const items = dateMap[dateStr] || [];
+    if (items.length) {
+      const dots = document.createElement('div');
+      dots.className = 'cal-dots';
+      items.slice(0, 4).forEach(it => {
+        const dot = document.createElement('span');
+        dot.className = 'cal-dot ' + (it.status === 'future' ? 'future' : it.status === 'draft' ? 'draft' : 'published');
+        dots.appendChild(dot);
+      });
+      cell.appendChild(dots);
+    }
+    cell.dataset.date = dateStr;
+    if (!cell.classList.contains('other-month')) {
+      cell.addEventListener('click', () => _calSelectDay(dateStr));
+    }
+    grid.appendChild(cell);
+  }
+}
+
+function _calSelectDay(dateStr) {
+  _calSelected = dateStr;
+  document.querySelectorAll('#cal-grid .cal-cell').forEach(c => {
+    c.classList.toggle('selected', c.dataset.date === dateStr);
+  });
+  const dateMap = _buildDateMap();
+  const items   = dateMap[dateStr] || [];
+  const [y, m, d] = dateStr.split('-');
+  document.getElementById('sched-day-title').textContent = `${y}年${parseInt(m)}月${parseInt(d)}日`;
+  const countEl = document.getElementById('sched-day-count');
+  countEl.textContent = `${items.length} 件`;
+  countEl.style.display = items.length ? '' : 'none';
+  const body = document.getElementById('sched-day-body');
+  if (!items.length) {
+    body.innerHTML = '<div class="sched-day-empty">この日の記事はありません。</div>';
+    return;
+  }
+  body.innerHTML = '';
+  const STATUS_JP = { publish: '投稿済み', future: '予約投稿', draft: '下書き' };
+  items.forEach(it => {
+    const row = document.createElement('div');
+    row.className = 'sched-item';
+    row.innerHTML = `
+      <div class="sched-item-thumb">${it.image_url ? `<img src="${_escHtml(it.image_url)}" alt="" onerror="this.style.display='none'">` : ''}</div>
+      <div class="sched-item-body">
+        <div class="sched-item-title">${_escHtml(it.title)}</div>
+        <div class="sched-item-meta">
+          <span class="brand-tag" style="font-size:10px;">${_escHtml(it.brand)}</span>
+          <span class="sched-status-badge ${it.status === 'future' ? 'future' : it.status === 'draft' ? 'draft' : 'published'}">${STATUS_JP[it.status] || it.status}</span>
+        </div>
+      </div>
+      ${it.wp_link ? `<a href="${_escHtml(it.wp_link)}" target="_blank" rel="noopener" style="font-size:11px;color:#888;white-space:nowrap;flex-shrink:0;">WPで確認 ↗</a>` : ''}`;
+    body.appendChild(row);
+  });
+}
+
+document.getElementById('cal-prev').addEventListener('click', () => {
+  if (--_calMonth < 0) { _calMonth = 11; _calYear--; }
+  _renderCalendar();
+});
+document.getElementById('cal-next').addEventListener('click', () => {
+  if (++_calMonth > 11) { _calMonth = 0; _calYear++; }
+  _renderCalendar();
+});
+
 /* ── X（Twitter）投稿パネル ─────────────────────────── */
 function openXPanel() {
   document.getElementById('panel-x').classList.add('show');
@@ -2990,6 +3218,7 @@ async function loadXPosts() {
 document.getElementById('nav-saved').addEventListener('click', openDraftsPanel);
 document.getElementById('nav-posted').addEventListener('click', openPostsPanel);
 document.getElementById('nav-x').addEventListener('click', openXPanel);
+document.getElementById('nav-schedule').addEventListener('click', openSchedulePanel);
 </script>
 
 <!-- 保存済みプレビューモーダル -->
@@ -3063,6 +3292,47 @@ document.getElementById('nav-x').addEventListener('click', openXPanel);
     <div class="list-panel-count" id="posts-count"></div>
     <div class="list-panel-body" id="posts-body">
       <div class="list-panel-empty">読み込み中…</div>
+    </div>
+  </div>
+</div>
+
+<!-- スケジュールカレンダーパネル -->
+<div class="list-panel" id="panel-schedule" role="dialog" aria-modal="true">
+  <div class="list-panel-inner">
+    <div class="list-panel-header">
+      <div>
+        <h2>投稿スケジュール</h2>
+        <div class="list-panel-header-sub">記事の投稿予定日を確認できます</div>
+      </div>
+      <button class="list-panel-close" onclick="closeSchedulePanel()">✕</button>
+    </div>
+
+    <div class="sched-layout">
+      <!-- カレンダー -->
+      <div class="cal-card">
+        <div class="cal-header">
+          <button class="cal-nav-btn" id="cal-prev">‹</button>
+          <span class="cal-month-label" id="cal-month-label"></span>
+          <button class="cal-nav-btn" id="cal-next">›</button>
+        </div>
+        <div class="cal-grid" id="cal-grid"></div>
+        <div class="cal-legend">
+          <span><span class="cal-dot published"></span>投稿済み</span>
+          <span><span class="cal-dot future"></span>予約投稿</span>
+          <span><span class="cal-dot draft"></span>下書き</span>
+        </div>
+      </div>
+
+      <!-- 選択日の記事一覧 -->
+      <div class="sched-day-panel">
+        <div class="sched-day-header">
+          <span id="sched-day-title">日付を選択してください</span>
+          <span class="sched-day-count" id="sched-day-count" style="display:none;"></span>
+        </div>
+        <div id="sched-day-body">
+          <div class="sched-day-empty">カレンダーの日付をクリックすると、その日の記事が表示されます。</div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
