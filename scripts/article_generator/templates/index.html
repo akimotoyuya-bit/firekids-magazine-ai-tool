@@ -3082,13 +3082,18 @@ function _calSelectDay(dateStr) {
   });
 }
 
-document.getElementById('cal-prev').addEventListener('click', () => {
-  if (--_calMonth < 0) { _calMonth = 11; _calYear--; }
-  _renderCalendar();
-});
-document.getElementById('cal-next').addEventListener('click', () => {
-  if (++_calMonth > 11) { _calMonth = 0; _calYear++; }
-  _renderCalendar();
+// cal-prev / cal-next は HTML がこの script より後にあるため DOMContentLoaded で登録
+document.addEventListener('DOMContentLoaded', function() {
+  const prev = document.getElementById('cal-prev');
+  const next = document.getElementById('cal-next');
+  if (prev) prev.addEventListener('click', () => {
+    if (--_calMonth < 0) { _calMonth = 11; _calYear--; }
+    _renderCalendar();
+  });
+  if (next) next.addEventListener('click', () => {
+    if (++_calMonth > 11) { _calMonth = 0; _calYear++; }
+    _renderCalendar();
+  });
 });
 
 /* ── X（Twitter）投稿パネル ─────────────────────────── */
