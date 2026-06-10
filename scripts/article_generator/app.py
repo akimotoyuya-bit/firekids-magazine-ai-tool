@@ -1862,11 +1862,17 @@ def _restore_drafts_from_s3():
     return restored
 
 
+_drafts_restored = False
+
+
 @app.route("/drafts")
 def drafts():
-    """保存済み記事一覧を返す（このセッションで生成・保存した記事のみ）。"""
+    """保存済み記事一覧を返す。初回アクセス時に S3 からメタを復元する。"""
+    global _drafts_restored
+    if not _drafts_restored:
+        _restore_drafts_from_s3()
+        _drafts_restored = True
     articles_dir = ROOT / "articles"
-    # S3からの自動復元は行わない。このコンテナで生成した記事だけを表示する。
 
     result = []
     if not articles_dir.exists():
@@ -1930,8 +1936,8 @@ def drafts():
                     pass
         result.extend(sorted(entries.values(), key=lambda x: x["saved_at"], reverse=True))
 
-    # 2026-06-09 以前の古い記事（Dockerイメージ混入分）を除外
-    result = [r for r in result if r.get("saved_at", "") >= "2026-06-09"]
+    # 2026-06 より前の古い記事（Dockerイメージ混入分）を除外
+    result = [r for r in result if r.get("saved_at", "") >= "2026-06-01"]
 
     return jsonify(result)
 
@@ -1971,6 +1977,72 @@ def delete_draft():
         _threading.Thread(target=_s3_delete, daemon=True).start()
 
     return jsonify({"ok": True, "deleted": deleted})
+
+
+@app.route("/upload-article-image", methods=["POST"])
+def upload_article_image():
+    """手元からインポートした画像を S3 に保存し、安定した proxy URL を返す。
+    blob: URL はセッション限りで失われるため、サムネイル表示・WP取り込みに使える
+    永続 URL に変換する。"""
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"ok": False, "error": "file is required"}), 400
+    bucket = os.getenv("S3_BUCKET", "")
+    if not bucket:
+        return jsonify({"ok": False, "error": "S3_BUCKET not configured"}), 500
+    import uuid as _uuid
+    ext = (f.filename.rsplit(".", 1)[-1] or "jpg").lower()
+    if ext not in ("jpg", "jpeg", "png", "gif", "webp"):
+        ext = "jpg"
+    content_type = f.mimetype or "image/jpeg"
+    s3_key = f"uploads/{datetime.date.today().strftime('%Y%m%d')}/{_uuid.uuid4().hex}.{ext}"
+    try:
+        s3 = _s3_client_simple()
+        s3.put_object(Bucket=bucket, Key=s3_key, Body=f.read(), ContentType=content_type)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"S3 upload failed: {e}"}), 500
+    # save_draft と同じ /generator/ プレフィックス付き proxy URL を返す（カード表示判定が http / "/" 始まりのため）
+    return jsonify({"ok": True, "s3_key": s3_key, "url": f"/generator/image-proxy?s3_key={s3_key}"})
+
+
+@app.route("/update-draft-image", methods=["POST"])
+def update_draft_image():
+    """保存済みドラフトのメタ image_url を更新する（画像差し込み後のサムネイル反映用）。"""
+    data = request.get_json(silent=True) or {}
+    brand = (data.get("brand") or "").strip()
+    number = (data.get("number") or "").strip()
+    slug = (data.get("slug") or "").strip()
+    image_url = (data.get("image_url") or "").strip()
+    if not brand or not number or not slug or not image_url:
+        return jsonify({"ok": False, "error": "パラメータ不足"}), 400
+
+    meta_path = ROOT / "articles" / brand / f"{number}_article_{slug}.meta.json"
+    if not meta_path.exists():
+        return jsonify({"ok": False, "error": "メタファイルが見つかりません"}), 404
+    try:
+        meta_obj = json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception:
+        meta_obj = {}
+    meta_obj["image_url"] = image_url
+    meta_path.write_text(json.dumps(meta_obj, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    bucket = os.getenv("S3_BUCKET", "")
+    if bucket:
+        def _s3_backup():
+            try:
+                s3 = _s3_client_simple()
+                s3.put_object(
+                    Bucket=bucket,
+                    Key=f"drafts/{brand}/{number}_article_{slug}.meta.json",
+                    Body=json.dumps(meta_obj, ensure_ascii=False, indent=2).encode("utf-8"),
+                    ContentType="application/json",
+                )
+            except Exception as e:
+                print(f"[update-draft-image] S3 backup error: {e}")
+        import threading as _threading
+        _threading.Thread(target=_s3_backup, daemon=True).start()
+
+    return jsonify({"ok": True})
 
 
 _POSTS_LOG_S3_KEY = "posts_log/posts_log.json"

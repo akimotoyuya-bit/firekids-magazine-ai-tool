@@ -1119,6 +1119,40 @@ textarea.direction-input {
   font-size: 40px; color: #ccc;
 }
 .post-card-body { padding: 14px 16px; display: flex; flex-direction: column; flex: 1; }
+
+/* ── X（Twitter）投稿パネル ─────────────────────────── */
+.x-compose-card {
+  background: #fff; border: 1px solid rgba(20,44,92,0.11); border-radius: 16px;
+  padding: 18px 20px; box-shadow: 0 1px 2px rgba(20,44,92,0.06), 0 8px 18px rgba(20,44,92,0.08);
+}
+.x-compose-label { font-size: 12px; font-weight: 700; color: #555; margin-bottom: 8px; }
+.x-compose-card textarea {
+  width: 100%; box-sizing: border-box; resize: vertical;
+  border: 1px solid #d8e0ec; border-radius: 10px; padding: 12px 14px;
+  font-size: 14px; line-height: 1.7; font-family: inherit; color: #111;
+}
+.x-compose-card textarea:focus { outline: none; border-color: #1267f2; }
+.x-compose-footer {
+  display: flex; align-items: center; justify-content: space-between; margin-top: 10px;
+}
+#x-char-count { font-size: 12px; color: #888; }
+#x-char-count.over { color: #d33; font-weight: 700; }
+.x-post-btn {
+  background: #000; color: #fff; border: none; border-radius: 999px;
+  padding: 9px 22px; font-size: 13px; font-weight: 700; cursor: pointer;
+  transition: opacity .15s;
+}
+.x-post-btn:hover { opacity: 0.8; }
+.x-post-btn:disabled { background: #c4ccd8; cursor: not-allowed; }
+.x-compose-hint { font-size: 11px; color: #999; margin-top: 8px; line-height: 1.6; }
+.x-select-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: none; border: 1px solid #d8e0ec; border-radius: 999px;
+  padding: 5px 14px; font-size: 12px; font-weight: 600; color: #333; cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.x-select-btn:hover { border-color: #000; background: #f6f7f9; }
+.post-card.x-selected { border-color: #000; box-shadow: 0 0 0 2px rgba(0,0,0,0.55); }
 .post-status-badge {
   display: inline-flex; align-items: center; gap: 5px;
   position: absolute; top: 10px; left: 10px;
@@ -1187,6 +1221,9 @@ textarea.direction-input {
     </button>
     <button class="sidebar-item" id="nav-posted">
       <span class="icon">✓</span> 投稿済み一覧
+    </button>
+    <button class="sidebar-item" id="nav-x">
+      <span class="icon">𝕏</span> X（Twitter）
     </button>
 
     <!-- セクション: 管理 -->
@@ -1960,12 +1997,50 @@ function insertImage(imageMeta) {
 
 function insertImageFromFile(file) {
   try {
+    // まず blob URL で即時プレビュー表示
     const localUrl = URL.createObjectURL(file);
     setPreviewImage(localUrl, file.name);
     document.getElementById('go-image').textContent = '差し込み済み ✓';
     flashHint('手元の画像を差し込みました（投稿時にWPへ取り込まれます）');
+
+    // バックグラウンドで S3 へアップロード → 永続URLに差し替え（サムネイル・再開用）
+    (async () => {
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const d = await fetch('upload-article-image', { method: 'POST', body: fd }).then(r => r.json());
+        if (d.ok && d.url) {
+          articleImageUrl = d.url;  // プレビュー表示は blob のまま、投稿・保存には永続URLを使用
+          updateDraftImage(d.url);
+        } else {
+          console.warn('[image-upload] failed', d.error);
+        }
+      } catch (e) {
+        console.warn('[image-upload] error', e);
+      }
+    })();
   } catch (e) {
     flashHint('画像挿入エラー: ' + e.message);
+  }
+}
+
+/* 保存済みドラフトのメタ image_url を更新（カードグリッドのサムネイル反映） */
+let currentDraftRef = null;   // {brand, number, slug} 自動保存成功時にセット
+
+async function updateDraftImage(imageUrl) {
+  if (!currentDraftRef || !imageUrl || imageUrl.startsWith('blob:')) return;
+  try {
+    await fetch('update-draft-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...currentDraftRef, image_url: imageUrl }),
+    });
+    // ローカルキャッシュにも反映
+    const entry = _draftsData.find(x =>
+      x.brand === currentDraftRef.brand && x.slug === currentDraftRef.slug && x.number === currentDraftRef.number);
+    if (entry) entry.image_url = imageUrl;
+  } catch (e) {
+    console.warn('[update-draft-image] error', e);
   }
 }
 
@@ -2033,8 +2108,9 @@ async function _wpGetWriterId(base, user, pass) {
 
 /** ブラウザから画像をWPメディアにアップロード */
 async function _wpUploadImage(base, user, pass, imageUrl) {
-  if (!imageUrl || imageUrl.startsWith('blob:')) return null;
+  if (!imageUrl) return null;
   try {
+    // blob: / 相対URL / http いずれも同一セッション内なら fetch 可能
     const imgResp = await fetch(imageUrl);
     if (!imgResp.ok) return null;
     const blob = await imgResp.blob();
@@ -2116,10 +2192,8 @@ async function publishArticle() {
     // Step3: 画像アップロード（CDN or S3プロキシURLをブラウザ経由でWPメディアへ）
     btn.textContent = '画像アップロード中…';
     const imgMeta = result.image_meta || null;
-    let wpImageUrl = (imgMeta && imgMeta.source_url) || '';
-    if (!wpImageUrl && articleImageUrl && articleImageUrl.startsWith('http') && !articleImageUrl.startsWith('blob:')) {
-      wpImageUrl = articleImageUrl;
-    }
+    // 表示中の画像（インポート画像含む）を最優先。なければ image_meta の URL。
+    let wpImageUrl = articleImageUrl || (imgMeta && imgMeta.source_url) || '';
     let featuredMediaId = null;
     let featuredMediaUrl = '';
     if (wpImageUrl) {
@@ -2171,11 +2245,14 @@ async function publishArticle() {
           wp_id:      wpPost.id,
           wp_link:    link,
           wp_status:  wpPost.status || mode,
-          image_url:  wpImageUrl || articleImageUrl || '',
+          image_url:  featuredMediaUrl || ((wpImageUrl && !wpImageUrl.startsWith('blob:')) ? wpImageUrl : ''),
           char_count: (result.article || '').length,
           date: new Date().toLocaleDateString('ja-JP', { year:'numeric', month:'numeric', day:'numeric' }).replace(/\//g, '.'),
         }),
       }).catch(() => {});
+
+      // WPメディアの永続URLで保存済みカードのサムネイルを更新
+      if (featuredMediaUrl) updateDraftImage(featuredMediaUrl);
     } else {
       const errMsg = (postResp.data && (postResp.data.message || JSON.stringify(postResp.data))) || `HTTP ${postResp.status}`;
       resultBox.innerHTML = `<span class="ng">✗ 投稿失敗: ${escapeHtml(errMsg)}</span>`;
@@ -2295,7 +2372,11 @@ async function generate(opts) {
             try { d = await r.json(); } catch(_) { d = {}; }
             console.log('[auto-save] response', d);
             if (d.ok) {
-              // 保存成功 → _draftsData に即追加（パネルを開いたとき即反映）
+              // 保存成功 → 参照を保持（画像差し込み時のサムネイル更新用）
+              currentDraftRef = { brand: saveBody.brand, number: d.number || '', slug: saveBody.slug };
+              // 画像がすでに差し込み済みなら（インポートが先行した場合）メタを更新
+              if (articleImageUrl && !articleImageUrl.startsWith('blob:')) updateDraftImage(articleImageUrl);
+              // _draftsData に即追加（パネルを開いたとき即反映）
               _draftsData.unshift({
                 brand:      saveBody.brand,
                 number:     d.number || '',
@@ -2611,9 +2692,90 @@ async function loadPosts() {
   }
 }
 
+/* ── X（Twitter）投稿パネル ─────────────────────────── */
+function openXPanel() {
+  document.getElementById('panel-x').classList.add('show');
+  loadXPosts();
+}
+function closeXPanel() {
+  document.getElementById('panel-x').classList.remove('show');
+}
+
+function _xUpdateCharCount() {
+  const ta = document.getElementById('x-compose-text');
+  const counter = document.getElementById('x-char-count');
+  const btn = document.getElementById('x-post-btn');
+  // URLはt.coで23文字に短縮されるため厳密ではないが目安として表示
+  const len = [...ta.value].length;
+  counter.textContent = `${len} / 280`;
+  counter.classList.toggle('over', len > 280);
+  btn.disabled = !ta.value.trim();
+}
+
+function _xSelectPost(p, cardEl) {
+  const ta = document.getElementById('x-compose-text');
+  const title = p.title || '';
+  const link  = p.wp_link || '';
+  ta.value = `${title}\n\n詳しくはこちら👇\n${link}\n\n#FIREKIDS #ヴィンテージ時計`;
+  _xUpdateCharCount();
+  document.querySelectorAll('#x-posts-body .post-card').forEach(c => c.classList.remove('x-selected'));
+  if (cardEl) cardEl.classList.add('x-selected');
+  ta.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+async function loadXPosts() {
+  const body = document.getElementById('x-posts-body');
+  body.innerHTML = '<div class="list-panel-empty">読み込み中…</div>';
+  try {
+    const data = await fetch('posts-log').then(r => r.json());
+    if (!data.length) {
+      body.innerHTML = '<div class="list-panel-empty">WordPress に投稿した記事がまだありません。投稿後にここから X で告知できます。</div>';
+      return;
+    }
+    const countEl = document.getElementById('x-posts-count');
+    if (countEl) countEl.textContent = `${data.length} 件`;
+
+    body.innerHTML = '<div class="posts-grid" id="x-posts-grid"></div>';
+    const grid = document.getElementById('x-posts-grid');
+
+    data.forEach(p => {
+      const status = p.wp_status || 'publish';
+      const statusLabel = STATUS_LABEL[status] || status;
+      const statusClass = STATUS_CLASS[status] || 'publish';
+      const hasImage = p.image_url && p.image_url.startsWith('http');
+      const thumbInner = hasImage
+        ? `<img class="post-card-thumb" src="${_escHtml(p.image_url)}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><div class="post-card-thumb-placeholder" style="display:none">${SVG_FILE}</div>`
+        : `<div class="post-card-thumb-placeholder">${SVG_FILE}</div>`;
+
+      const card = document.createElement('article');
+      card.className = 'post-card';
+      card.innerHTML = `
+        <div class="post-card-thumb-wrap">
+          ${thumbInner}
+          <span class="post-status-badge ${statusClass}"><span class="draft-status-dot"></span>${statusLabel}</span>
+        </div>
+        <div class="post-card-body">
+          <div class="post-card-meta">
+            <span class="brand-tag">${_escHtml(p.brand || '')}</span>
+            <span>${_escHtml(p.date || p.logged_at || '')}</span>
+          </div>
+          <div class="post-card-title">${_escHtml(p.title || '（タイトル未設定）')}</div>
+          <div class="post-card-actions" style="margin-top:auto;padding-top:10px;">
+            <button class="x-select-btn">𝕏 この記事を投稿する</button>
+          </div>
+        </div>`;
+      card.querySelector('.x-select-btn').addEventListener('click', () => _xSelectPost(p, card));
+      grid.appendChild(card);
+    });
+  } catch(e) {
+    body.innerHTML = `<div class="list-panel-empty">読み込み失敗: ${e.message}</div>`;
+  }
+}
+
 /* ── サイドバーボタンのハンドラ登録 ─────────────────── */
 document.getElementById('nav-saved').addEventListener('click', openDraftsPanel);
 document.getElementById('nav-posted').addEventListener('click', openPostsPanel);
+document.getElementById('nav-x').addEventListener('click', openXPanel);
 </script>
 
 <!-- 保存済み一覧パネル（NAS風フルスクリーン） -->
@@ -2661,10 +2823,50 @@ document.getElementById('nav-posted').addEventListener('click', openPostsPanel);
   </div>
 </div>
 
+<!-- X（Twitter）投稿パネル -->
+<div class="list-panel" id="panel-x" role="dialog" aria-modal="true">
+  <div class="list-panel-inner">
+    <div class="list-panel-header">
+      <div>
+        <h2>X（Twitter）で記事を告知</h2>
+        <div class="list-panel-header-sub">WordPress に投稿した記事を選んで、FIRE KIDS の X アカウントで投稿できます</div>
+      </div>
+      <button class="list-panel-close" onclick="closeXPanel()">✕</button>
+    </div>
+
+    <div class="x-compose-card">
+      <div class="x-compose-label">投稿文（編集できます）</div>
+      <textarea id="x-compose-text" rows="5" placeholder="下の一覧から記事を選ぶと、投稿文がここに自動入力されます"></textarea>
+      <div class="x-compose-footer">
+        <span id="x-char-count">0 / 280</span>
+        <button class="x-post-btn" id="x-post-btn" disabled>
+          𝕏 で投稿する ↗
+        </button>
+      </div>
+      <div class="x-compose-hint">
+        ※ X の投稿画面が新しいタブで開きます。ブラウザで FIRE KIDS のアカウントにログインした状態で投稿してください。
+      </div>
+    </div>
+
+    <div class="list-panel-count" id="x-posts-count"></div>
+    <div class="list-panel-body" id="x-posts-body">
+      <div class="list-panel-empty">読み込み中…</div>
+    </div>
+  </div>
+</div>
+
 <script>
 // ソートボタンはHTMLがscriptの後に来るためDOMContentLoadedで登録
 document.getElementById('sort-desc').addEventListener('click', function() { setDraftSort('desc'); });
 document.getElementById('sort-asc').addEventListener('click', function() { setDraftSort('asc'); });
+
+// X（Twitter）投稿パネル: 文字数カウント + Web Intent で投稿画面を開く
+document.getElementById('x-compose-text').addEventListener('input', _xUpdateCharCount);
+document.getElementById('x-post-btn').addEventListener('click', function() {
+  const text = document.getElementById('x-compose-text').value.trim();
+  if (!text) return;
+  window.open('https://x.com/intent/post?text=' + encodeURIComponent(text), '_blank', 'noopener');
+});
 
 // カテゴリ選択ボタン
 document.querySelectorAll('.cat-btn').forEach(function(btn) {
