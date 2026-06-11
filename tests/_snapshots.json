@@ -1,0 +1,28 @@
+{
+  "title_to_slug": {
+    "ロレックス サブマリーナーとはどんな時計？初心者が知っておくべき基礎知識": "rolex-submariner-ー-どんな時計-初心者が知っておくべき基礎知識",
+    "「シチズンって渋すぎる」と笑っていた私が、1972年製クロノグラフに心を折られた話": "citizen-って渋すぎる-と笑っていた私が-1972-製クロノグラフに心を折られた話",
+    "Grand Seiko 62GS 1967 Review!!": "grand-seiko-62gs-1967-review",
+    "オメガ スピードマスター 3選": "omega-speedmaster-3選",
+    "": "article"
+  },
+  "markdown_to_wp_html": "<h2>見出し2</h2>\n<p>これは段落です。<strong>強調</strong>と<a href=\"https://example.com\">リンク</a>を含みます。</p>\n<ul><li>箇条書き1</li><li>箇条書き2</li></ul>\n<ol><li>番号付き1</li><li>番号付き2</li></ol>\n<!-- wp:table {\"hasFixedLayout\":true,\"className\":\"is-style-stripes\"} --><figure class=\"wp-block-table is-style-stripes\"><table style=\"border-collapse:collapse;width:100%\"><thead><tr><th>モデル</th><th>年代</th></tr></thead><tbody><tr><td>62GS</td><td>1967</td></tr><tr><td>44GS</td><td>1968</td></tr></tbody></table></figure><!-- /wp:table -->\n<hr />\n<h3>見出し3</h3>\n<p>最後の段落。</p>",
+  "strip_tags": "Hello & world second line – dash",
+  "extract_h2_sections": [
+    {
+      "heading": "First Heading",
+      "body_snippet": "body one text"
+    },
+    {
+      "heading": "Second Heading",
+      "body_snippet": "body two text"
+    }
+  ],
+  "cosine": [
+    1.0,
+    0.9746318461970762,
+    0.0,
+    0.0,
+    0.0
+  ]
+}
