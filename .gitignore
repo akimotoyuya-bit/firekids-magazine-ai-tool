@@ -85,6 +85,7 @@ exports/tmp/
 *.log
 .cache/
 *.bak
+commit_msg.txt
 
 # ============================================
 # 大容量データ（必要に応じてLFSへ）
@@ -107,3 +108,6 @@ node_modules/
 .env.production.local
 .env.development.local
 out/
+
+# Claude Code ローカル設定
+.claude/

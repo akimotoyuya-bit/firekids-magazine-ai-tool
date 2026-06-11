@@ -50,7 +50,6 @@ import io
 import os
 import re
 from pathlib import Path
-from typing import Optional
 
 # ── カラムインデックス ─────────────────────────────────────────────
 COL_FLAGS      = 0

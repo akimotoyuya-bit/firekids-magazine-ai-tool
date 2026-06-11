@@ -2158,7 +2158,7 @@ def image_proxy():
 @app.route("/draft-content/<brand>/<filename>")
 def draft_content(brand: str, filename: str):
     """保存済み記事の本文HTMLを返す（resumeDraft 用）。"""
-    from flask import send_from_directory, abort
+    from flask import abort
     # パストラバーサル防止
     if ".." in brand or ".." in filename or "/" in brand or "/" in filename:
         abort(400)

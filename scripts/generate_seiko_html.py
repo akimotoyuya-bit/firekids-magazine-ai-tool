@@ -250,14 +250,12 @@ def extract_faq(content):
     lines = content.split("\n")
     current_q = None
     current_a_lines = []
-    in_faq = False
 
     for i, line in enumerate(lines):
         stripped = line.strip()
 
         # Check for FAQ section headers
         if re.match(r'^#{1,3}\s*(よくある質問|FAQ)', stripped):
-            in_faq = True
             continue
 
         # Check for Q: patterns (both ### Q: and **Q: styles)
@@ -290,8 +288,6 @@ def extract_faq(content):
                         faqs.append({"q": current_q, "a": answer})
                 current_q = None
                 current_a_lines = []
-                if stripped.startswith("---"):
-                    in_faq = False
                 continue
 
             if stripped and not stripped.startswith("**Q"):

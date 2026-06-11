@@ -25,7 +25,6 @@ CDN商品画像から5:2比率のX投稿用画像を自動生成します。
 import sys
 import os
 import re
-import json
 import urllib.request
 from pathlib import Path
 

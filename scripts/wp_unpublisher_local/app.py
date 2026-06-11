@@ -4,7 +4,6 @@ WordPress 記事 非公開化ローカルツール
 - .env は wp_uploader_local/ の .env を共有可（パス指定）
 """
 import os
-import re
 import sys
 from urllib.parse import urlparse, unquote
 from flask import Flask, render_template, request, jsonify
