@@ -76,4 +76,13 @@
 
 ## Phase 4: Next.js 整理
 
-（作業時に追記）
+- `src/components/` へ表示用コンポーネントを抽出（JSX は無変更のまま移動）:
+  - `BrandFilterTabs.tsx` — validation / wordpress 両ページで重複していたブランドフィルタータブを共通化（`basePath` プロップで遷移先を切替）
+  - `DetailValidation.tsx` — validation ページの詳細検証表示（`TYPE_LABELS` 含む）
+  - `DryRunDetail.tsx` — wordpress ページの dry-run 詳細表示（`InfoCard` 含む）
+- `src/lib/articles.ts`:
+  - `ParsedFilename` インターフェースを export し `parseFilename` の戻り値型を明確化
+  - マジックストリングを定数化: `ARTICLE_PREFIX` / `X_POST_PREFIX` / `KNOWN_EXTENSIONS` / `POSTED_DIR_NAME`（正規表現・パス構築は定数から組み立て。パターン自体は従来と同一）
+  - `parseNumberSlug()` を新設（両ページで重複していた `^(\d+)_(.+)$` パースを共通化）
+- 検証: `npm run build` 成功。生成ルート一覧（7 ルート + SSG 15 ブランドパス）・チャンクサイズとも Phase 0 の記録と完全一致。
+- コンポーネントの型は `ReturnType<typeof validateArticle>` → `ValidationResult`、`ReturnType<typeof getArticleContent>` → `ArticleContent | null` に明示化（同一型のエイリアス解決のみ）。

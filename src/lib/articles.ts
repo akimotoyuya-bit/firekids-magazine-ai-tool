@@ -7,13 +7,39 @@ const REPO_ROOT = process.cwd();
 const ARTICLES_DIR = path.join(REPO_ROOT, "articles");
 const X_POSTS_DIR = path.join(REPO_ROOT, "x_posts");
 
-function parseFilename(filename: string): {
+/** 記事ファイル名のプレフィックス（`014_article_xxx.txt` の "article" 部分） */
+const ARTICLE_PREFIX = "article";
+/** X 投稿ファイル名のプレフィックス（`014_x_xxx.md` の "x" 部分） */
+const X_POST_PREFIX = "x";
+/** 記事関連ファイルとして認識する拡張子 */
+const KNOWN_EXTENSIONS = ["txt", "html", "md", "jpg"] as const;
+
+/** `_posted` フォルダ名（投稿済みマーカー） */
+const POSTED_DIR_NAME = "_posted";
+
+/** ファイル名から抽出した連番とスラッグ */
+export interface ParsedFilename {
   number: string;
   slug: string;
-} | null {
-  // 例: 014_article_submariner_5512_5513.txt
-  //     014_x_submariner_5512_5513.md
-  const m = filename.match(/^(\d+)_(?:article|x)_(.+)\.(txt|html|md|jpg)$/);
+}
+
+// 例: 014_article_submariner_5512_5513.txt / 014_x_submariner_5512_5513.md
+const FILENAME_RE = new RegExp(
+  `^(\\d+)_(?:${ARTICLE_PREFIX}|${X_POST_PREFIX})_(.+)\\.(${KNOWN_EXTENSIONS.join("|")})$`
+);
+
+function parseFilename(filename: string): ParsedFilename | null {
+  const m = filename.match(FILENAME_RE);
+  if (!m) return null;
+  return { number: m[1], slug: m[2] };
+}
+
+/**
+ * URL クエリの `014_submariner_5512` 形式を連番とスラッグに分解する
+ * （validation / wordpress ページ共通）。
+ */
+export function parseNumberSlug(value: string): ParsedFilename | null {
+  const m = value.match(/^(\d+)_(.+)$/);
   if (!m) return null;
   return { number: m[1], slug: m[2] };
 }
@@ -79,7 +105,7 @@ export function getArticleList(brand?: Brand): ArticleMeta[] {
       }
 
       // _posted フォルダにあるものをチェック
-      const postedDir = path.join(xBrandDir, "_posted");
+      const postedDir = path.join(xBrandDir, POSTED_DIR_NAME);
       if (fs.existsSync(postedDir)) {
         const postedFiles = fs.readdirSync(postedDir);
         for (const file of postedFiles) {
@@ -94,7 +120,7 @@ export function getArticleList(brand?: Brand): ArticleMeta[] {
     }
 
     // _posted フォルダ (articles) のチェック
-    const postedDir = path.join(brandDir, "_posted");
+    const postedDir = path.join(brandDir, POSTED_DIR_NAME);
     if (fs.existsSync(postedDir)) {
       const postedFiles = fs.readdirSync(postedDir);
       for (const file of postedFiles) {
@@ -134,8 +160,8 @@ export function getArticleContent(
   };
 
   const brandDir = path.join(ARTICLES_DIR, brand);
-  const txtPath = path.join(brandDir, `${number}_article_${slug}.txt`);
-  const htmlPath = path.join(brandDir, `${number}_article_${slug}.html`);
+  const txtPath = path.join(brandDir, `${number}_${ARTICLE_PREFIX}_${slug}.txt`);
+  const htmlPath = path.join(brandDir, `${number}_${ARTICLE_PREFIX}_${slug}.html`);
 
   let txt: string | undefined;
   let html: string | undefined;
@@ -151,8 +177,8 @@ export function getArticleContent(
   }
 
   const xBrandDir = path.join(X_POSTS_DIR, brand);
-  const xPostPath = path.join(xBrandDir, `${number}_x_${slug}.md`);
-  const xImagePath = path.join(xBrandDir, `${number}_x_${slug}.jpg`);
+  const xPostPath = path.join(xBrandDir, `${number}_${X_POST_PREFIX}_${slug}.md`);
+  const xImagePath = path.join(xBrandDir, `${number}_${X_POST_PREFIX}_${slug}.jpg`);
   if (fs.existsSync(xPostPath)) {
     xPost = fs.readFileSync(xPostPath, "utf-8");
     meta.hasXPost = true;
@@ -162,7 +188,7 @@ export function getArticleContent(
   }
 
   // _posted チェック
-  const postedDir = path.join(brandDir, "_posted");
+  const postedDir = path.join(brandDir, POSTED_DIR_NAME);
   if (fs.existsSync(postedDir)) {
     const postedFiles = fs.readdirSync(postedDir);
     if (postedFiles.some((f) => f.includes(key))) meta.isPosted = true;
