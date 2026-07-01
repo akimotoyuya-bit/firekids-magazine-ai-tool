@@ -2,9 +2,6 @@ import Link from "next/link";
 import { getArticleList } from "@/lib/articles";
 import { BRANDS, BRAND_LABELS, type Brand } from "@/lib/types";
 
-/**
- * ブランドフィルタータブ（validation / wordpress ページ共通）。
- */
 export default function BrandFilterTabs({
   basePath,
   brand,
@@ -12,27 +9,23 @@ export default function BrandFilterTabs({
   basePath: string;
   brand?: Brand;
 }) {
+  const activeBrands = BRANDS.filter((b) => getArticleList(b).length > 0);
+
   return (
-    <div className="inline-flex flex-wrap gap-1 bg-white border border-gray-200 rounded-lg p-1 mb-4">
+    <div className="flex flex-wrap gap-2 mb-5" role="navigation" aria-label="ブランドフィルター">
       <Link
         href={basePath}
-        className={`text-sm px-3 py-1.5 rounded-md transition ${
-          !brand
-            ? "font-medium text-gray-900 bg-gray-100"
-            : "text-gray-500 hover:bg-gray-100"
-        }`}
+        className={`fk-chip ${!brand ? "fk-chip-active" : ""}`}
+        aria-current={!brand ? "page" : undefined}
       >
         すべて
       </Link>
-      {BRANDS.filter((b) => getArticleList(b).length > 0).map((b) => (
+      {activeBrands.map((b) => (
         <Link
           key={b}
           href={`${basePath}?brand=${b}`}
-          className={`text-sm px-3 py-1.5 rounded-md transition ${
-            brand === b
-              ? "font-medium text-gray-900 bg-gray-100"
-              : "text-gray-500 hover:bg-gray-100"
-          }`}
+          className={`fk-chip ${brand === b ? "fk-chip-active" : ""}`}
+          aria-current={brand === b ? "page" : undefined}
         >
           {BRAND_LABELS[b]}
         </Link>

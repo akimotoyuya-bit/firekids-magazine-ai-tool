@@ -5,23 +5,24 @@
 :root {
   /* ── Surface ── */
   --bg:          #F8F9FA;
-  --bg-card:     #FFFFFF;
-  --bg-subtle:   #F1F3F5;
+  --bg-card:     rgba(255,255,255,0.82);
+  --bg-subtle:   #F1F5F9;
 
   /* ── Border ── */
-  --border:      #E5E7EB;
-  --border-hov:  #D1D5DB;
-  --border-focus:#6366F1;
+  --border:      rgba(15,23,42,0.08);
+  --border-hov:  rgba(15,23,42,0.14);
+  --border-focus:#DC2626;
 
   /* ── Text ── */
-  --text:        #111827;
-  --text-sub:    #374151;
-  --text-muted:  #9CA3AF;
+  --text:        #0F172A;
+  --text-sub:    #334155;
+  --text-muted:  #94A3B8;
 
-  /* ── Accent（FIRE KIDSブランドレッドをトーンダウン）── */
+  /* ── Accent（FIRE KIDSブランドレッド） ── */
   --accent:      #DC2626;
   --accent-d:    #B91C1C;
   --accent-bg:   #FEF2F2;
+  --accent-grad: linear-gradient(135deg, #DC2626 0%, #EF4444 45%, #F97373 100%);
 
   /* ── Semantic ── */
   --success:     #16A34A;
@@ -33,93 +34,262 @@
   --info:        #2563EB;
   --info-bg:     #EFF6FF;
 
-  /* ── Status Pills（記事ステータス）── */
+  /* ── Status Pills ── */
   --status-draft:     #6B7280;
   --status-ready:     #2563EB;
   --status-published: #16A34A;
 
   /* ── Layout ── */
-  --sidebar-w:   220px;
   --header-h:    52px;
   --r-sm:        6px;
-  --r:           8px;
-  --r-lg:        12px;
+  --r:           10px;
+  --r-lg:        18px;
+  --r-pill:      20px;
 
-  /* ── Shadow ── */
-  --shadow-sm:   0 1px 2px 0 rgb(0 0 0 / 0.05);
-  --shadow:      0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
-  --shadow-md:   0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  /* ── Shadow（generator と同一） ── */
+  --shadow-card: 0 0 0 1px rgba(15,23,42,.08), 0 20px 50px rgba(15,23,42,.06);
+  --shadow-sm:   0 1px 2px 0 rgba(15,23,42,0.06);
+  --shadow-md:   0 4px 16px rgba(15,23,42,0.10);
+  --shadow-hov:  0 0 0 1px rgba(220,38,38,.12), 0 24px 56px rgba(15,23,42,.10);
 }
 
-html {
-  scroll-behavior: smooth;
-}
+html { scroll-behavior: smooth; }
 
 body {
   font-family: "Inter", "Noto Sans JP", -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--text);
-  background: var(--bg);
+  /* generator と同等の淡いラジアルグラデーション背景 */
+  background:
+    radial-gradient(circle at 82% 8%, rgba(56,189,248,.10), transparent 40%),
+    radial-gradient(circle at 10% 80%, rgba(220,38,38,.05), transparent 35%),
+    linear-gradient(180deg, #F8FAFC 0%, #F1F5F9 100%);
+  background-attachment: fixed;
   min-height: 100vh;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
 }
 
 @layer components {
-  /* ガラスモーフィズム基本カード */
-  .glass {
-    background: rgba(255, 255, 255, 0.55);
-    backdrop-filter: blur(14px) saturate(140%);
-    -webkit-backdrop-filter: blur(14px) saturate(140%);
-    border: 1px solid rgba(255, 255, 255, 0.6);
-    box-shadow: 0 8px 30px rgba(90, 82, 72, 0.1);
-    border-radius: 16px;
-  }
-
-  /* 濃いめ（テーブルなど） */
-  .glass-strong {
-    background: rgba(255, 255, 255, 0.7);
-    backdrop-filter: blur(16px) saturate(150%);
-    -webkit-backdrop-filter: blur(16px) saturate(150%);
-    border: 1px solid rgba(255, 255, 255, 0.65);
-    box-shadow: 0 10px 34px rgba(90, 82, 72, 0.12);
-    border-radius: 16px;
+  /* ─── カード（generator と同一トークン） ─── */
+  .fk-card {
+    background: var(--bg-card);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    box-shadow: var(--shadow-card);
+    border-radius: var(--r-lg);
   }
 
   /* ホバーで浮き上がるカード */
-  .glass-hover {
-    transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+  .fk-card-hover {
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+    cursor: pointer;
   }
-  .glass-hover:hover {
-    transform: translateY(-3px);
-    border-color: rgba(230, 126, 34, 0.5);
-    box-shadow: 0 16px 40px rgba(230, 126, 34, 0.16);
-  }
-
-  /* ヘッダー/フッター用のすりガラス */
-  .glass-nav {
-    background: rgba(26, 26, 26, 0.82);
-    backdrop-filter: blur(12px) saturate(140%);
-    -webkit-backdrop-filter: blur(12px) saturate(140%);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  .fk-card-hover:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-hov);
   }
 
-  /* グラデーションのテーブルヘッダー */
+  /* ─── テーブル ─── */
+  .fk-table-wrap {
+    background: var(--bg-card);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    box-shadow: var(--shadow-card);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+  }
+
   .fk-thead {
-    background: linear-gradient(100deg, #1a1a1a 0%, #2c2620 55%, #3a3128 100%);
+    background: #F8FAFC;
+    border-bottom: 1px solid rgba(15,23,42,.08);
+  }
+  .fk-thead th {
+    font-size: 11px;
+    font-weight: 700;
+    color: #94A3B8;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    padding: 11px 16px;
+  }
+  .fk-tbody tr {
+    border-bottom: 1px solid rgba(15,23,42,.05);
+    transition: background 0.12s;
+  }
+  .fk-tbody tr:last-child { border-bottom: none; }
+  .fk-tbody tr:hover { background: rgba(15,23,42,.025); }
+
+  /* ─── ステータスバッジ ─── */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: var(--r-pill);
+    letter-spacing: 0.01em;
+  }
+  .badge-published {
+    background: #F0FDF4;
+    color: #15803D;
+    box-shadow: 0 0 0 1px rgba(21,128,61,.15);
+  }
+  .badge-draft {
+    background: #F9FAFB;
+    color: #6B7280;
+    box-shadow: 0 0 0 1px rgba(107,114,128,.18);
+  }
+  .badge-error {
+    background: #FEF2F2;
+    color: #DC2626;
+    box-shadow: 0 0 0 1px rgba(220,38,38,.18);
+  }
+  .badge-warning {
+    background: #FFFBEB;
+    color: #B45309;
+    box-shadow: 0 0 0 1px rgba(180,83,9,.18);
+  }
+  .badge-info {
+    background: #EFF6FF;
+    color: #1D4ED8;
+    box-shadow: 0 0 0 1px rgba(29,78,216,.15);
+  }
+
+  /* ─── フィルターチップ（pill） ─── */
+  .fk-chip {
+    display: inline-flex;
+    align-items: center;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 7px 17px;
+    border-radius: var(--r-pill);
+    transition: background 0.12s, color 0.12s, box-shadow 0.12s;
+    cursor: pointer;
+    text-decoration: none;
+    white-space: nowrap;
+    box-shadow: 0 0 0 1px rgba(15,23,42,.10);
+    background: #fff;
+    color: var(--text-sub);
+  }
+  .fk-chip:hover {
+    background: #F8FAFC;
+    box-shadow: 0 0 0 1px rgba(15,23,42,.18);
+    color: var(--text);
+  }
+  .fk-chip-active {
+    background: var(--accent);
     color: #fff;
+    box-shadow: 0 0 0 1px var(--accent), 0 4px 12px rgba(220,38,38,.22);
+  }
+  .fk-chip-active:hover {
+    background: var(--accent-d);
+    color: #fff;
+    box-shadow: 0 0 0 1px var(--accent-d), 0 4px 12px rgba(220,38,38,.28);
   }
 
-  /* アクセントのグラデーション文字 */
+  /* ─── プライマリボタン ─── */
+  .btn-primary {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 10px 20px;
+    border-radius: var(--r);
+    background: var(--accent-grad);
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(220,38,38,.22), inset 0 1px 0 rgba(255,255,255,.22);
+    transition: transform 0.12s, box-shadow 0.12s;
+    cursor: pointer;
+    border: none;
+    text-decoration: none;
+  }
+  .btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 18px rgba(220,38,38,.30), inset 0 1px 0 rgba(255,255,255,.22);
+  }
+
+  /* ─── 検索入力 ─── */
+  .fk-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: #fff;
+    box-shadow: 0 0 0 1px rgba(15,23,42,.10);
+    border-radius: var(--r);
+    padding: 10px 14px;
+    transition: box-shadow 0.14s;
+  }
+  .fk-search:focus-within {
+    box-shadow: 0 0 0 2px var(--accent);
+  }
+  .fk-search input {
+    border: none;
+    outline: none;
+    background: transparent;
+    font-size: 14px;
+    color: var(--text);
+    width: 100%;
+    min-height: 24px;
+  }
+  .fk-search input::placeholder { color: var(--text-muted); }
+
+  /* ─── グラデーション文字（ヘッダー） ─── */
   .text-gradient {
-    background: linear-gradient(100deg, #1a1a1a 0%, #8b6f47 60%, #e67e22 100%);
+    background: linear-gradient(110deg, #0F172A 0%, #DC2626 70%, #F97373 100%);
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
   }
 
-  /* 数値などの強調バッジ */
+  /* ─── KPI数値 ─── */
   .stat-accent {
-    background: linear-gradient(120deg, #e67e22 0%, #c4621a 100%);
+    background: var(--accent-grad);
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
   }
+
+  /* ─── ナビのすりガラス ─── */
+  .glass-nav {
+    background: rgba(255,255,255,0.78);
+    backdrop-filter: blur(16px) saturate(150%);
+    -webkit-backdrop-filter: blur(16px) saturate(150%);
+    box-shadow: 0 1px 0 rgba(15,23,42,.07), 0 2px 8px rgba(15,23,42,.04);
+  }
+
+  /* ─── 空状態 ─── */
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 56px 24px;
+    color: var(--text-muted);
+    gap: 12px;
+    text-align: center;
+  }
+
+  /* ─── スケルトン ─── */
+  .skeleton {
+    background: linear-gradient(90deg, #F1F5F9 25%, #E2E8F0 50%, #F1F5F9 75%);
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.5s infinite;
+    border-radius: 6px;
+  }
+  @keyframes skeleton-shimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  /* ─── フォーカスリング ─── */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+}
+
+/* ─── レスポンシブ: テーブルを横スクロールで保護 ─── */
+@media (max-width: 640px) {
+  .fk-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 }

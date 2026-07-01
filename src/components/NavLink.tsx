@@ -9,10 +9,10 @@ export function NavLink({ href, label }: { href: string; label: string }) {
   return (
     <Link
       href={href}
-      className={`px-3 py-1.5 rounded-md text-sm transition ${
+      className={`px-3 py-1.5 rounded-[10px] text-sm font-medium transition ${
         active
-          ? "text-gray-900 font-medium"
-          : "text-gray-500 hover:text-gray-700"
+          ? "text-[#DC2626] bg-[#FEF2F2]"
+          : "text-[#334155] hover:text-[#0F172A] hover:bg-slate-100"
       }`}
     >
       {label}
