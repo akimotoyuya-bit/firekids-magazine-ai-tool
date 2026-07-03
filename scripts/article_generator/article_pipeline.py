@@ -3,7 +3,8 @@ import datetime
 import json
 import re
 
-from bedrock_client import invoke_claude, invoke_claude_stream
+from bedrock_client import (invoke_claude, invoke_claude_messages,
+                            invoke_claude_messages_stream)
 from embeddings import embedding_degraded, reset_embed_state
 from facets import (build_facet_cta_url, detect_mentioned_brands, facet_labels,
                     has_any_facet, sellable_brands_jp)
@@ -16,6 +17,14 @@ from state import (ARTICLE_CATEGORIES, BRANDS, MAX_REGEN_RETRIES, ROOT,
                    TONE_CHARS, TONE_LABELS, InventoryMissingError, log)
 from vector_store import get_store
 from wp_scanner import ensure_cache_fresh
+
+# 本文生成（Stage 3）専用の出力上限。目標文字数は最大 9000字（TONE_CHARS）だが、
+# 見出し・箇条書き・テーブル記法等のオーバーヘッドを見込み余裕を持たせる。
+# Claude Sonnet 4 系は Bedrock 上で max_tokens 最大 64000 まで対応。
+ARTICLE_BODY_MAX_TOKENS = 16000
+# max_tokens 上限で文章が途中で打ち切られた（stop_reason == "max_tokens"）場合、
+# prefill（assistant の続きから生成させる）で自動的に続きを取得する回数の上限。
+MAX_CONTINUATION_ROUNDS = 2
 
 
 # ─── ルール・コンテキスト読み込み ────────────────────────────────────────────
@@ -473,6 +482,36 @@ def build_article_prompt(
 
 # ─── 生成オーケストレーション ─────────────────────────────────────────────────
 
+def _generate_article_body(prompt: str, on_chunk=None) -> tuple[str, str]:
+    """本文生成 + max_tokens 打ち切り時の自動継続（prefill）。
+
+    Bedrock の stop_reason が "max_tokens" の場合、直前の応答を assistant ターンとして
+    そのまま続きから生成させる（prefill）ことで、文章が途中で切れる事故を防ぐ。
+    戻り値: (本文全体, 最終 stop_reason)
+    """
+    messages = [{"role": "user", "content": prompt}]
+    if on_chunk:
+        article, stop_reason = invoke_claude_messages_stream(messages, on_chunk, max_tokens=ARTICLE_BODY_MAX_TOKENS)
+    else:
+        article, stop_reason = invoke_claude_messages(messages, max_tokens=ARTICLE_BODY_MAX_TOKENS)
+
+    rounds = 0
+    while stop_reason == "max_tokens" and rounds < MAX_CONTINUATION_ROUNDS:
+        rounds += 1
+        log.info("article_body_truncated round=%s len=%s", rounds, len(article))
+        messages = [
+            {"role": "user", "content": prompt},
+            {"role": "assistant", "content": article.rstrip()},
+        ]
+        if on_chunk:
+            cont_text, stop_reason = invoke_claude_messages_stream(messages, on_chunk, max_tokens=ARTICLE_BODY_MAX_TOKENS)
+        else:
+            cont_text, stop_reason = invoke_claude_messages(messages, max_tokens=ARTICLE_BODY_MAX_TOKENS)
+        article = article.rstrip() + cont_text
+
+    return article, stop_reason
+
+
 def generate_article(brand_key: str, tone: str = "auto", fk_id: str = "",
                      on_stage=None, on_chunk=None, allow_no_inventory: bool = False,
                      direction: str = "", article_category: str = "basic",
@@ -506,7 +545,8 @@ def generate_article(brand_key: str, tone: str = "auto", fk_id: str = "",
     2. propose_structure()      — タイトル + H2 構成案（小型コール）
     3. check_overlap() × N      — 2 レベル被り検出 + 再構成
     4. build_article_prompt()   — 本文プロンプト構築
-    5. invoke_claude_stream()   — 本文生成（大型コール・ストリーミング）
+    5. _generate_article_body() — 本文生成（大型コール・ストリーミング）。max_tokens 上限で
+       打ち切られた場合は prefill で自動的に続きを生成し、文章が途中で切れるのを防ぐ
     6. check_ngram_overlap()    — n-gram 重複チェック（警告のみ）
     """
     def stage(msg: str, stage_id: str = "") -> None:
@@ -588,10 +628,7 @@ def generate_article(brand_key: str, tone: str = "auto", fk_id: str = "",
         facet_desc=facet_desc, cta_override=cta_override,
     )
     stage("本文を執筆しています…", "bedrock_call")
-    if on_chunk:
-        article = invoke_claude_stream(prompt, on_chunk)
-    else:
-        article = invoke_claude(prompt)
+    article, stop_reason = _generate_article_body(prompt, on_chunk)
 
     # 画像メタをリザルトに含める（WordPress 連携は別ステップ）
     # プレースホルダーは記事本文から除去し、メタ情報として返す
@@ -636,6 +673,10 @@ def generate_article(brand_key: str, tone: str = "auto", fk_id: str = "",
     degraded_modes: list[str] = []
     if embedding_degraded():
         degraded_modes.append("embedding_unavailable")
+    if stop_reason == "max_tokens":
+        # 継続生成を上限回数試みても打ち切りが解消しなかった場合の最終フォールバック警告
+        degraded_modes.append("content_truncated")
+        log.warning("article_body_still_truncated brand=%s len=%s", brand_key, len(article))
 
     if embedding_degraded() or not cache_had_data:
         overlap_status = "unchecked"   # 過去記事チェックが信頼できない

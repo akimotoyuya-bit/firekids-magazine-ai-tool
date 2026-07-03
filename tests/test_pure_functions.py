@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 import app
+import article_pipeline
 import overlap
 
 SNAPSHOTS = json.loads((Path(__file__).parent / "_snapshots.json").read_text(encoding="utf-8"))
@@ -396,6 +397,73 @@ def test_fetch_theme_image_maps_best_candidate_to_image_meta(monkeypatch):
         "source_url": "https://cdn.firekids.jp/products/1/a.jpg",
         "alt": "オメガ シーマスター",
     }
+
+
+# ─── _generate_article_body（max_tokens 打ち切り時の自動継続） ────────────────
+
+def test_generate_article_body_no_continuation_when_not_truncated(monkeypatch):
+    calls = []
+
+    def fake_stream(messages, on_chunk, max_tokens=8000):
+        calls.append(messages)
+        return "完結した本文です。", "end_turn"
+
+    monkeypatch.setattr(article_pipeline, "invoke_claude_messages_stream", fake_stream)
+    article, stop_reason = article_pipeline._generate_article_body("prompt", on_chunk=lambda t: None)
+
+    assert article == "完結した本文です。"
+    assert stop_reason == "end_turn"
+    assert len(calls) == 1
+
+
+def test_generate_article_body_continues_after_max_tokens_streaming(monkeypatch):
+    calls = []
+
+    def fake_stream(messages, on_chunk, max_tokens=8000):
+        calls.append(len(messages))
+        if len(messages) == 1:
+            return "前半はここまでです。オ", "max_tokens"
+        assert messages[1] == {"role": "assistant", "content": "前半はここまでです。オ"}
+        return "イルが劣化しています。", "end_turn"
+
+    monkeypatch.setattr(article_pipeline, "invoke_claude_messages_stream", fake_stream)
+    article, stop_reason = article_pipeline._generate_article_body("prompt", on_chunk=lambda t: None)
+
+    assert article == "前半はここまでです。オイルが劣化しています。"
+    assert stop_reason == "end_turn"
+    assert calls == [1, 2]
+
+
+def test_generate_article_body_continues_after_max_tokens_non_streaming(monkeypatch):
+    calls = []
+
+    def fake_messages(messages, max_tokens=8000):
+        calls.append(len(messages))
+        if len(messages) == 1:
+            return "続きが途中で", "max_tokens"
+        return "切れた文章です。", "end_turn"
+
+    monkeypatch.setattr(article_pipeline, "invoke_claude_messages", fake_messages)
+    article, stop_reason = article_pipeline._generate_article_body("prompt", on_chunk=None)
+
+    assert article == "続きが途中で切れた文章です。"
+    assert stop_reason == "end_turn"
+    assert calls == [1, 2]
+
+
+def test_generate_article_body_stops_after_max_continuation_rounds(monkeypatch):
+    calls = []
+
+    def fake_stream(messages, on_chunk, max_tokens=8000):
+        calls.append(len(messages))
+        return f"chunk{len(calls)} ", "max_tokens"
+
+    monkeypatch.setattr(article_pipeline, "invoke_claude_messages_stream", fake_stream)
+    article, stop_reason = article_pipeline._generate_article_body("prompt", on_chunk=lambda t: None)
+
+    # 初回 + MAX_CONTINUATION_ROUNDS 回までしか継続しない（無限ループしない）
+    assert len(calls) == 1 + article_pipeline.MAX_CONTINUATION_ROUNDS
+    assert stop_reason == "max_tokens"
 
 
 def test_cta_url_without_category_id_still_renders_as_button():

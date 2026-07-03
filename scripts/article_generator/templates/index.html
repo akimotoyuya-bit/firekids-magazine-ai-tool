@@ -2154,8 +2154,12 @@ function showAxis(result) {
     badges.innerHTML += '<span class="axis-badge info">過去記事チェック未実行</span>';
     shown = true;
   }
+  const DEGRADED_LABELS = {
+    embedding_unavailable: 'Embedding利用不可',
+    content_truncated: '本文が長く、自動継続後も末尾が不完全な可能性があります（要確認）',
+  };
   (result.degraded_modes || []).forEach(m => {
-    const label = m === 'embedding_unavailable' ? 'Embedding利用不可' : m;
+    const label = DEGRADED_LABELS[m] || m;
     badges.innerHTML += '<span class="axis-badge warn">' + escapeHtml(label) + '</span>';
     shown = true;
   });
