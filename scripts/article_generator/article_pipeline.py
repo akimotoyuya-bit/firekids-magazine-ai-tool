@@ -5,7 +5,8 @@ import re
 
 from bedrock_client import invoke_claude, invoke_claude_stream
 from embeddings import embedding_degraded, reset_embed_state
-from facets import build_facet_cta_url, facet_labels, has_any_facet
+from facets import (build_facet_cta_url, detect_mentioned_brands, facet_labels,
+                    has_any_facet, sellable_brands_jp)
 from formatting import markdown_to_wp_html, title_to_slug
 from inventory import (fetch_image_for_item, fetch_theme_image, find_by_fk,
                        format_for_prompt, inventory_summary, select_feature_item,
@@ -104,11 +105,14 @@ def propose_structure(brand_key: str, tone: str = "auto", item: dict | None = No
 
     facet_block = ""
     if facet_desc:
+        allowed_brands = "、".join(sellable_brands_jp(brand_key))
         facet_block = f"""【この記事の軸（テーマ条件）】
 {facet_desc}
 
 この記事は特定の1本のモデルを主役にせず、上記の条件に当てはまる時計を横断的に紹介する「テーマ記事」です。
 複数のブランド・モデルを比較・紹介する構成にしてください（在庫データに基づく個別商品の紹介は不要です）。
+取り上げてよいブランドは FIRE KIDS が実際に取り扱う次のブランドに限定してください: {allowed_brands}
+上記に無いブランド（パテック・フィリップ、A.ランゲ＆ゾーネ等、FIRE KIDSで取り扱いのないブランド）は企画・タイトル・見出しに一切含めないでください。
 """
 
     direction_block = ""
@@ -232,7 +236,13 @@ def revise_structure(brand_key: str, tone: str, previous: dict, flagged: list,
             )
     conflict_text = "\n".join(lines) if lines else "（詳細なし）"
     direction_block = f"\n【維持したい方向性】\n{direction}\n" if direction else ""
-    facet_block = f"\n【維持したいテーマ条件】\n{facet_desc}\n（特定の1本を主役にせず、この条件を横断的に扱うこと）\n" if facet_desc else ""
+    facet_block = (
+        f"\n【維持したいテーマ条件】\n{facet_desc}\n"
+        f"（特定の1本を主役にせず、この条件を横断的に扱うこと。"
+        f"取り上げてよいブランドは FIRE KIDS が実際に取り扱う次のブランドに限定する: "
+        f"{'、'.join(sellable_brands_jp(brand_key))}。上記に無いブランドは登場させない）\n"
+        if facet_desc else ""
+    )
 
     prompt = f"""FIRE KIDS Magazine の「{brand_jp}」ブランド記事（{tone_jp}）の企画を修正してください。
 
@@ -300,10 +310,14 @@ def build_article_prompt(
 
     facet_block = ""
     if facet_desc:
+        allowed_brands = "、".join(sellable_brands_jp(brand_key))
         facet_block = f"""━━━━━ テーマ条件（特定の1本を主役にしない） ━━━━━
 この記事の軸: {facet_desc}
 - 上記条件に当てはまる時計を横断的に紹介する記事であり、在庫の特定商品を主役にしない
 - 複数のブランド・モデル・年代を比較・紹介する構成にする
+- 本文で扱ってよいブランドは FIRE KIDS が実際に取り扱う次のブランドに限定する: {allowed_brands}
+- 上記に無いブランド（パテック・フィリップ、A.ランゲ＆ゾーネ等）は一切登場させない。歴史・時代背景の説明のために他ブランドの一般論を持ち出すことも禁止する
+- Cal.番号・Ref.番号など具体的な型番スペックは、caliber_db.json / correction_log.json にデータがあるブランドのみで記載する（{caliber_summary}）。データの無いブランドは型番を創作せず、一般的な特徴・時代背景のみに留める
 - 予算（金額）が条件に含まれる場合も、個別商品の相場価格・販売価格は断定的に記載しない。あくまで読者の目安として扱う
 - caliber_db.json / correction_log.json で裏付けられない仕様・年代・事実は記載しない
 
@@ -478,6 +492,12 @@ def generate_article(brand_key: str, tone: str = "auto", fk_id: str = "",
       - brand_key が空 or BRANDS に無い場合は "THEME"（FIRE KIDS Magazine 扱い）にフォールバックする。
       - CTA リンクは facets.build_facet_cta_url() で firekids.jp/products/list の
         該当フィルタ付きURLを組み立てる（ブランド一覧ページ固定ではない）。
+      - 本文で扱ってよいブランドは FIRE KIDS が実際に取り扱うブランドのみに制限する
+        （sellable_brands_jp）。パテック・フィリップ等、取扱の無いブランドの一般知識での
+        補完を防ぐため。
+      - 画像は本文生成が完了した後に選ぶ。detect_mentioned_brands() で本文中に実際に
+        登場するブランドを検出し、そのブランドの在庫画像を優先的に取得する（本文と無関係な
+        ブランドの写真が付く事故を防ぐ）。見つからない場合のみ条件のみでフォールバック検索する。
 
     on_stage(msg, stage_id): 進行状況（UI 表示 + ログ）
     on_chunk(text): 本文生成中のテキスト断片（リアルタイムプレビュー）
@@ -530,21 +550,12 @@ def generate_article(brand_key: str, tone: str = "auto", fk_id: str = "",
 
     facet_desc = ""
     cta_override = ""
-    theme_image_meta: dict | None = None
     if facet_mode:
         facet_desc = "・".join(facet_labels(styles, genders, decades, model_query, min_price, max_price))
         cta_override = build_facet_cta_url(
             brand_key=brand_key, styles=styles, genders=genders, decades=decades,
             model_query=model_query, min_price=min_price, max_price=max_price,
         )
-        stage("条件に合う商品の画像を確認しています…", "image_fetch")
-        try:
-            theme_image_meta = fetch_theme_image(
-                brand_key=brand_key, styles=styles, genders=genders, decades=decades,
-                model_query=model_query, min_price=min_price, max_price=max_price,
-            )
-        except Exception:
-            theme_image_meta = None
 
     stage("被らないテーマ・構成を考えています…", "prompt_build")
     direction = (direction or "").strip()[:500]
@@ -591,8 +602,31 @@ def generate_article(brand_key: str, tone: str = "auto", fk_id: str = "",
             image_meta = img
         # プレースホルダーを本文から除去（CDN URL 直貼りは避ける）
         article = article.replace(image_placeholder, "")
-    elif theme_image_meta:
-        image_meta = theme_image_meta
+    elif facet_mode:
+        # 本文が確定した後に画像を選ぶことで、本文で実際に言及されたブランドの
+        # 商品画像を優先する（条件だけで選ぶと本文と無関係なブランドの写真が付く事故が起きるため）。
+        stage("記事に登場するブランドの画像を確認しています…", "image_fetch")
+        image_meta = None
+        # 遅延防止のため、言及頻度上位3ブランドまでに絞って画像を探す
+        for candidate_brand in (detect_mentioned_brands(article)[:3] or [brand_key]):
+            try:
+                image_meta = fetch_theme_image(
+                    brand_key=candidate_brand, styles=styles, genders=genders, decades=decades,
+                    model_query=model_query, min_price=min_price, max_price=max_price,
+                )
+            except Exception:
+                image_meta = None
+            if image_meta:
+                break
+        if not image_meta:
+            # 言及ブランドでは見つからない場合、条件のみでフォールバック検索する
+            try:
+                image_meta = fetch_theme_image(
+                    brand_key=brand_key, styles=styles, genders=genders, decades=decades,
+                    model_query=model_query, min_price=min_price, max_price=max_price,
+                )
+            except Exception:
+                image_meta = None
 
     stage("仕上げチェック中…")
     slug         = title_to_slug(title)

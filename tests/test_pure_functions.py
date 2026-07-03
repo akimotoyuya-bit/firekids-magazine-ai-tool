@@ -300,6 +300,44 @@ def test_build_facet_query_string_empty_when_no_facets():
     assert facets.build_facet_query_string() == ""
 
 
+# ─── テーマ記事のブランド整合性（本文とEC画像のブランドを一致させるためのガード） ──
+
+def test_sellable_brands_jp_restricts_to_single_brand_when_specified():
+    import facets
+
+    assert facets.sellable_brands_jp("ROLEX") == ["ロレックス"]
+
+
+def test_sellable_brands_jp_returns_full_catalog_for_theme():
+    import facets
+
+    brands = facets.sellable_brands_jp("THEME")
+    assert "ロレックス" in brands
+    assert "オメガ" in brands
+    assert "パテック・フィリップ" not in brands
+    assert "A.ランゲ＆ゾーネ" not in brands
+
+
+def test_sellable_brands_jp_returns_full_catalog_when_unspecified():
+    import facets
+
+    assert facets.sellable_brands_jp("") == facets.sellable_brands_jp("THEME")
+
+
+def test_detect_mentioned_brands_orders_by_frequency_then_position():
+    import facets
+
+    text = "オメガ シーマスターとロレックス デイトジャストを比較します。ロレックスはさらにサブマリーナーにも触れます。"
+    assert facets.detect_mentioned_brands(text) == ["ROLEX", "OMEGA"]
+
+
+def test_detect_mentioned_brands_ignores_unsellable_and_empty_text():
+    import facets
+
+    assert facets.detect_mentioned_brands("") == []
+    assert facets.detect_mentioned_brands("パテック・フィリップの歴史について") == []
+
+
 # ─── テーマ記事用の画像候補選定（inventory.select_feature_image_for_facets） ────
 
 def test_select_feature_image_for_facets_empty_candidates(monkeypatch):

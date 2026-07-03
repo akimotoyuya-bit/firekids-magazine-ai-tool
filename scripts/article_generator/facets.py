@@ -156,3 +156,41 @@ def build_facet_query_string(
 ) -> str:
     """テーマ記事の画像候補クロール用の生クエリ文字列（UTMなし）。ファセット未指定なら空文字。"""
     return "&".join(_build_params(brand_key, styles, genders, decades, model_query, min_price, max_price))
+
+
+# ─── テーマ記事のブランド整合性（本文で扱ってよいブランド／実際に扱われたブランド） ──
+
+def sellable_brands_jp(brand_key: str = "") -> list[str]:
+    """テーマ記事の本文で扱ってよいブランドの日本語名一覧。
+
+    brand_key が実在ブランド（THEME/OTHER 以外）に指定されている場合はそのブランド
+    1件のみに絞る。未指定・THEME の場合は FIRE KIDS が実際に取り扱う全ブランドを返す
+    （パテック・フィリップ、A.ランゲ＆ゾーネ等、取扱の無いブランドを本文で創作させないため）。
+    """
+    if brand_key and brand_key in BRANDS and brand_key not in ("THEME", "OTHER"):
+        return [BRANDS[brand_key]["jp"]]
+    return [meta["jp"] for key, meta in BRANDS.items() if key not in ("THEME", "OTHER")]
+
+
+def detect_mentioned_brands(text: str) -> list[str]:
+    """生成済み記事本文の中で実際に言及されている FIRE KIDS 取扱ブランドを検出する。
+
+    テーマ記事の画像選定を「本文の内容」に追従させるために使う
+    （本文で言及の無いブランドの商品画像が貼られる事故を防ぐ）。
+    登場回数が多い順、同数なら本文中での初出位置が早い順に並べる。
+    THEME/OTHER は対象外。
+    """
+    if not text:
+        return []
+    stats: list[tuple[str, int, int]] = []
+    for key, meta in BRANDS.items():
+        if key in ("THEME", "OTHER"):
+            continue
+        jp = meta.get("jp", "")
+        if not jp:
+            continue
+        count = text.count(jp)
+        if count:
+            stats.append((key, count, text.find(jp)))
+    stats.sort(key=lambda t: (-t[1], t[2]))
+    return [s[0] for s in stats]
