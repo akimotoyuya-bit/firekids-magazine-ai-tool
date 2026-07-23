@@ -6,6 +6,10 @@ const GENERATOR_URL =
   "https://s5d6hqidtk.us-east-1.awsapprunner.com/generator/";
 
 export const revalidate = 900;
+// firekids は nginx で国外 IP を遮断するため、WordPress 取得を東京リージョンから行う。
+export const preferredRegion = "hnd1";
+// ビルド（米国）ではなく、リクエスト時に東京リージョンのサーバーで取得させる。
+export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
   const published = await getPublishedPosts();
